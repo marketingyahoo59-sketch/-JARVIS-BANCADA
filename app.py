@@ -25,6 +25,39 @@ DATA_DIR = Path(__file__).resolve().parent / "data" / "cases"
 UPLOAD_DIR = Path(__file__).resolve().parent / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+STATUS_PT = {
+    "intake": "abertura",
+    "diagnosing": "diagnosticando",
+    "solution": "solução",
+    "reassess": "reavaliação",
+    "resolved": "resolvido",
+    "abandoned": "abandonado",
+}
+PHASE_PT = {
+    "intake": "abertura",
+    "vision": "análise da foto",
+    "measure": "medição",
+    "solution": "solução",
+    "reassess": "reavaliação",
+    "done": "concluído",
+}
+VERDICT_PT = {
+    "ok": "OK",
+    "fail": "FALHOU",
+    "pending": "pendente",
+    "unknown": "indefinido",
+}
+PROVIDER_PT = {
+    "openai": "OpenAI (GPT-4o)",
+    "anthropic": "Claude 3.5 Sonnet",
+}
+
+
+def pt(mapa: dict[str, str], valor: str | None, padrao: str = "—") -> str:
+    if not valor:
+        return padrao
+    return mapa.get(valor, valor)
+
 
 def agent() -> DiagnosticAgent:
     if "agent" not in st.session_state:
@@ -108,14 +141,18 @@ def sidebar_cases(ag: DiagnosticAgent) -> None:
             "Configure `.env` com OPENAI_API_KEY ou ANTHROPIC_API_KEY."
         )
     else:
-        st.sidebar.success(f"LLM ativo: **{info['active']}**")
+        nome = pt(PROVIDER_PT, info.get("active"), "IA")
+        st.sidebar.success(f"IA ativa: **{nome}**")
 
     cases = ag.list_cases()
     if not cases:
         st.sidebar.caption("Nenhum caso ainda.")
     else:
         labels = {
-            c["case_id"]: f"{c['board_model']} · {c['status']} · {c['measurements']} med."
+            c["case_id"]: (
+                f"{c['board_model']} · {pt(STATUS_PT, c.get('status'))} · "
+                f"{c['measurements']} medições"
+            )
             for c in cases
         }
         choice = st.sidebar.selectbox(
@@ -127,7 +164,7 @@ def sidebar_cases(ag: DiagnosticAgent) -> None:
             st.session_state.case_id = choice
             st.rerun()
 
-    if st.session_state.case_id and st.sidebar.button("Encerrar / novo caso", use_container_width=True):
+    if st.session_state.case_id and st.sidebar.button("Encerrar e começar novo caso", use_container_width=True):
         st.session_state.case_id = None
         st.session_state.last_image_bytes = None
         st.session_state.last_image_name = None
@@ -169,14 +206,18 @@ def case_view(ag: DiagnosticAgent) -> None:
     with left:
         st.markdown(f"### {case['board_model']}")
         st.caption(
-            f"Caso `{case['case_id']}` · status **{case.get('status')}** · "
-            f"fase **{case.get('phase')}** · revisões de estratégia: {case.get('strategy_revisions', 0)}"
+            f"Caso `{case['case_id']}` · situação **{pt(STATUS_PT, case.get('status'))}** · "
+            f"etapa **{pt(PHASE_PT, case.get('phase'))}** · "
+            f"reavaliações: {case.get('strategy_revisions', 0)}"
         )
         st.markdown(f"**Sintoma:** {case['symptom']}")
 
         st.divider()
         for msg in case.get("messages", []):
-            with st.chat_message(msg["role"]):
+            papel = "assistant" if msg["role"] == "assistant" else "user"
+            with st.chat_message(papel):
+                autor = "Agente" if msg["role"] == "assistant" else "Você"
+                st.caption(autor)
                 st.markdown(msg["content"])
                 meta = msg.get("meta") or {}
                 if meta.get("probe") and msg["role"] == "assistant":
@@ -193,15 +234,16 @@ def case_view(ag: DiagnosticAgent) -> None:
 
         st.divider()
         st.markdown("#### Sua resposta")
-        photo = st.file_uploader(
-            "Foto da placa (opcional nesta mensagem)",
-            type=["jpg", "jpeg", "png", "webp"],
-            key=f"upload_{case['case_id']}_{len(case.get('messages', []))}",
-        )
+        default_hint = "Digite a medição (ex: 4.8 V) ou descreva o que fez (ex: troquei C905, não resolveu)"
+        if last_meta.get("next_action") == "ask_photo":
+            default_hint = "Envie a foto acima e confirme com ‘foto enviada’"
+
+        # Uploader + texto no mesmo form evita perda de estado no envio
         with st.form("reply", clear_on_submit=True):
-            default_hint = "Digite a medição (ex: 4.8 V) ou descreva o que fez (ex: troquei C905, não resolveu)"
-            if last_meta.get("next_action") == "ask_photo":
-                default_hint = "Envie a foto acima e confirme com ‘foto enviada’"
+            photo = st.file_uploader(
+                "Foto da placa (opcional nesta mensagem)",
+                type=["jpg", "jpeg", "png", "webp"],
+            )
             user_text = st.text_input("Mensagem / valor medido", placeholder=default_hint)
             send = st.form_submit_button("Enviar ao agente", type="primary", use_container_width=True)
 
@@ -216,20 +258,25 @@ def case_view(ag: DiagnosticAgent) -> None:
                 if photo is not None:
                     image_bytes = photo.getvalue()
                     image_name = photo.name
-                    mime = photo.type or "image/jpeg"
-                    image_mime = mime
+                    image_mime = photo.type or "image/jpeg"
                     st.session_state.last_image_bytes = image_bytes
                     st.session_state.last_image_name = image_name
                     dest = UPLOAD_DIR / f"{case['case_id']}_{image_name}"
                     dest.write_bytes(image_bytes)
+                # Mantém o case_id mesmo se a chamada demorar ou falhar
+                st.session_state.case_id = case["case_id"]
                 with st.spinner("Agente analisando…"):
-                    ag.handle_user(
-                        case,
-                        text,
-                        image_bytes=image_bytes,
-                        image_name=image_name,
-                        image_mime=image_mime,
-                    )
+                    try:
+                        ag.handle_user(
+                            case,
+                            text,
+                            image_bytes=image_bytes,
+                            image_name=image_name,
+                            image_mime=image_mime,
+                        )
+                    except Exception as exc:  # noqa: BLE001 — mostrar erro na UI
+                        st.error(f"Falha ao falar com a IA: {exc}")
+                        st.stop()
                 st.rerun()
 
     with right:
@@ -242,7 +289,7 @@ def case_view(ag: DiagnosticAgent) -> None:
                         "Ponto": m.get("point"),
                         "Esperado": m.get("expected"),
                         "Medido": m.get("measured"),
-                        "Veredito": m.get("verdict"),
+                        "Resultado": pt(VERDICT_PT, m.get("verdict")),
                     }
                     for m in measures
                 ],
