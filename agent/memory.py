@@ -47,6 +47,9 @@ class CaseMemory:
             "images": [],
             "solution_notes": [],
             "strategy_revisions": 0,
+            "documents": [],
+            "pending_confirm": None,
+            "safety_ack": False,
         }
         self.save(case)
         return case

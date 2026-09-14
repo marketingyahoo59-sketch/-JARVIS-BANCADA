@@ -1,32 +1,28 @@
-# Agente de Diagnóstico Eletrônico (Streamlit)
+# JARVIS de Bancada
 
-Aplicativo **ativo** de diagnóstico: a IA guia cada medição, interpreta o valor e indica a peça a trocar. O usuário só executa (mãos); o agente é o cérebro.
+Assistente ativo de diagnóstico eletrônico (Streamlit): escuta, vê a placa, pesquisa e fala — estilo Homem de Ferro para bancada.
 
 ## O que faz
 
-1. **Voz mãos-livres** — escuta contínua (detecta fim da frase); a IA responde **falando**.
-2. **Início** — diga o modelo da placa e o sintoma (sem apertar enviar).
-3. **Visão** — upload de foto; a IA marca onde colocar as pontas do multímetro.
-4. **Loop** — pede uma medição por vez; você fala o valor.
-5. **Perguntas** — pode perguntar no meio (“o que é esse CI?”) e ela responde.
-6. **Pesquisa** — se precisar, busca referências na web do modelo/sintoma.
-7. **Decisão** — valor OK → próximo ponto; errado → **Modo Solução** (peça a trocar).
-8. **Memória** — histórico em `data/cases/` para reavaliar se o conserto falhar.
+1. **Visão** — marca cruzes nas pontas do multímetro na foto e mostra zoom da área.
+2. **Status de voz** — chip Ouvindo / Processando / Falando.
+3. **Banco de falhas** — ao marcar resolvido, salva placa/sintoma/peça para casos parecidos.
+4. **Esquema/PDF** — anexa datasheet ou esquema; o texto entra no contexto do agente.
+5. **Checklist de segurança** — avisos de tomada, capacitores, ESD, escala do multímetro.
+6. **Fallback de voz** — TTS OpenAI; se falhar, usa edge-tts (pt-BR).
+7. **PWA** — `static/manifest.json` + service worker para instalar no celular.
+8. **Confirmação** — medição “errada” pede **confirmo** antes do Modo Solução.
 
-## Requisitos
-
-- Python 3.10+
-- Chave **OpenAI (GPT-4o)** ou **Anthropic (Claude 3.5 Sonnet)** — opcional para demo local
+Também: escuta contínua (Web Speech), Whisper para áudio manual, pesquisa web, memória em `data/cases/`.
 
 ## Instalação
 
 ```bash
-cd /caminho/do/projeto
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edite .env e coloque OPENAI_API_KEY ou ANTHROPIC_API_KEY
+# OPENAI_API_KEY ou ANTHROPIC_API_KEY
 ```
 
 ## Executar
@@ -35,36 +31,26 @@ cp .env.example .env
 streamlit run app.py --server.port 3847 --server.address 0.0.0.0
 ```
 
-Abra o endereço indicado no terminal (ex.: http://127.0.0.1:3847).
+Abra http://127.0.0.1:3847
 
-Sem API key o app sobe em **modo demo** (regras locais) para você validar o fluxo.
+Sem API key sobe em **modo demo**.
 
-## Disco / pasta do projeto
+## Testes rápidos
 
-Neste ambiente Cloud o código fica em `/workspace`. No seu PC Windows, clone/copie o projeto para o **disco D** (ex.: `D:\projetos\diagnostico-eletronica`) para não ocupar o disco C, conforme sua preferência.
+```bash
+.venv/bin/python scripts/test_features.py
+```
 
 ## Estrutura
 
 ```
-app.py                 # Interface Streamlit
-agent/
-  diagnostic.py        # Orquestração do agente
-  llm.py               # GPT-4o / Claude + fallback demo
-  memory.py            # Persistência do caso
-data/cases/            # Histórico JSON por caso
-data/uploads/          # Fotos enviadas
+app.py
+agent/           # diagnostic, llm, memory, vision, voice, docs, failures, safety
+static/          # PWA
+data/cases/      # histórico
+scripts/test_features.py
 ```
-
-## Variáveis de ambiente
-
-| Variável | Descrição |
-|----------|-----------|
-| `LLM_PROVIDER` | `openai` ou `anthropic` |
-| `OPENAI_API_KEY` | Chave OpenAI |
-| `ANTHROPIC_API_KEY` | Chave Anthropic |
-| `OPENAI_MODEL` | Padrão `gpt-4o` |
-| `ANTHROPIC_MODEL` | Padrão `claude-3-5-sonnet-20241022` |
 
 ## Aviso
 
-Uso educativo/assistido. Trabalhe com segurança em fontes SMPS (capacitores carregados, isolamento). O agente sugere passos; a responsabilidade da intervenção é sua.
+Uso assistido. Em fontes SMPS: capacitores carregados e isolamento. A responsabilidade da intervenção é sua.

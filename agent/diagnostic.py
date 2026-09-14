@@ -1,12 +1,30 @@
-"""Orquestração do agente de diagnóstico ativo."""
+"""Orquestração do agente de diagnóstico ativo (JARVIS de bancada)."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from .docs import docs_context_from_case, extract_text_from_bytes, save_case_doc
+from .failures import add_resolved_failure, similar_as_context
 from .llm import call_llm, provider_status
 from .memory import CaseMemory
 from .research import research_for_case
+from .safety import safety_brief
+
+
+CONFIRM_WORDS = (
+    "confirmo",
+    "confirmado",
+    "confirma",
+    "isso mesmo",
+    "está certo",
+    "esta certo",
+    "pode seguir",
+    "sim, confirma",
+    "sim confirma",
+    "ok confirma",
+)
 
 
 class DiagnosticAgent:
@@ -23,22 +41,95 @@ class DiagnosticAgent:
         self.memory.save(case)
 
         research = research_for_case(case)
+        bank = similar_as_context(board_model, symptom)
+        extra = "\n\n".join(x for x in [research, bank] if x)
+        safety = safety_brief("intake")
+
         result = call_llm(
             case,
             user_text=(
                 f"Início do caso. Modelo da placa: {board_model}. "
-                f"Sintoma: {symptom}. Peça a foto da placa e prepare o primeiro passo de medição. "
-                "Se souber falhas comuns deste modelo pela pesquisa, mencione em 1 frase."
+                f"Sintoma: {symptom}. Peça a foto da placa e prepare o primeiro passo. "
+                f"Inclua um aviso breve de segurança: {safety} "
+                "Se houver falhas comuns do modelo (pesquisa/banco), mencione em 1 frase."
             ),
-            research_notes=research or None,
+            research_notes=extra or None,
         )
-        return self._apply_result(case, result, user_visible=True)
+        out = self._apply_result(case, result, user_visible=True)
+        out["safety_brief"] = safety
+        return out
 
     def load_case(self, case_id: str) -> dict[str, Any] | None:
         return self.memory.load(case_id)
 
     def list_cases(self) -> list[dict[str, Any]]:
         return self.memory.list_cases()
+
+    def attach_document(
+        self,
+        case: dict[str, Any],
+        filename: str,
+        data: bytes,
+    ) -> dict[str, Any]:
+        path = save_case_doc(case["case_id"], filename, data)
+        excerpt = extract_text_from_bytes(filename, data)
+        case.setdefault("documents", []).append(
+            {
+                "filename": filename,
+                "path": str(path),
+                "excerpt": excerpt[:8000],
+            }
+        )
+        self.memory.save(case)
+        self.memory.add_message(
+            case,
+            "user",
+            f"[Documento anexado: {filename}]",
+            meta={"document": filename},
+        )
+        result = call_llm(
+            case,
+            user_text=(
+                f"O usuário anexou o documento/esquema “{filename}”. "
+                "Use o conteúdo (se houver texto) para orientar o próximo passo de medição. "
+                "Peça UMA medição objetiva."
+            ),
+            research_notes=docs_context_from_case(case),
+        )
+        return self._apply_result(case, result, user_visible=True)
+
+    def resolve_case(
+        self,
+        case: dict[str, Any],
+        replaced_part: str,
+        notes: str = "",
+    ) -> dict[str, Any]:
+        case["status"] = "resolved"
+        case["phase"] = "done"
+        failed_node = ""
+        for n in reversed(case.get("solution_notes") or []):
+            if isinstance(n, dict) and n.get("failed_node"):
+                failed_node = str(n["failed_node"])
+                break
+        entry = add_resolved_failure(
+            board_model=str(case.get("board_model") or ""),
+            symptom=str(case.get("symptom") or ""),
+            failed_node=failed_node or "nó não informado",
+            replaced_part=replaced_part,
+            notes=notes,
+            measurements=list(case.get("measurements") or []),
+        )
+        self.memory.add_message(
+            case,
+            "assistant",
+            (
+                f"Caso marcado como resolvido. Peça trocada: **{replaced_part}**. "
+                "Salvei no banco de falhas para ajudar próximos consertos parecidos."
+            ),
+            meta={"phase": "done", "mode": "diagnose", "verdict": "ok", "bank_id": entry["id"]},
+        )
+        self.memory.save(case)
+        return {"case": case, "bank_entry": entry}
 
     def handle_user(
         self,
@@ -53,16 +144,44 @@ class DiagnosticAgent:
             meta["image"] = image_name
         self.memory.add_message(case, "user", user_text, meta=meta or None)
 
+        # Confirmação pendente de medição antes do modo solução
+        pending = case.get("pending_confirm")
+        if pending and self._is_confirm(user_text):
+            return self._finalize_confirmed_fail(case, pending)
+        if pending and self._is_deny(user_text):
+            case["pending_confirm"] = None
+            self.memory.save(case)
+            msg = (
+                "Ok, cancelei a confirmação. Me diga de novo o valor medido com cuidado "
+                "(ponto + número + unidade)."
+            )
+            self.memory.add_message(
+                case,
+                "assistant",
+                msg,
+                meta={"phase": "measure", "mode": "diagnose", "verdict": "pending", "spoken_reply": msg},
+            )
+            return {
+                "case": case,
+                "message": msg,
+                "spoken_reply": msg,
+                "phase": "measure",
+                "mode": "diagnose",
+                "probe": pending.get("probe"),
+                "verdict": "pending",
+                "solution": None,
+                "next_action": "ask_measurement",
+            }
+
         prompt = user_text
         if image_bytes:
             prompt = (
                 f"{user_text}\n\n"
                 "[O usuário anexou uma foto da placa. Analise a imagem, "
                 "indique onde colocar as pontas (descrição + coordenadas 0–100) "
-                "e peça UMA medição específica.]"
+                "e peça UMA medição específica. Inclua aviso curto de segurança.]"
             )
 
-        # Pesquisa quando pergunta aberta, modelo específico, ou pedido explícito
         lowered = user_text.lower()
         should_research = any(
             k in lowered
@@ -81,13 +200,16 @@ class DiagnosticAgent:
             )
         ) or bool(case.get("board_model"))
         research = research_for_case(case, user_text) if should_research else ""
+        bank = similar_as_context(str(case.get("board_model") or ""), str(case.get("symptom") or ""))
+        docs = docs_context_from_case(case)
+        extra = "\n\n".join(x for x in [research, bank, docs] if x)
 
         result = call_llm(
             case,
             prompt,
             image_bytes=image_bytes,
             image_mime=image_mime,
-            research_notes=research or None,
+            research_notes=extra or None,
         )
 
         if image_bytes and image_name:
@@ -110,7 +232,100 @@ class DiagnosticAgent:
                 else None,
             )
 
-        return self._apply_result(case, result, user_visible=True)
+        # Intercepta FAIL: pede confirmação antes de entrar em solução
+        if (result.get("verdict") == "fail") and result.get("solution"):
+            return self._request_measurement_confirm(case, result, user_text)
+
+        out = self._apply_result(case, result, user_visible=True)
+        out["safety_brief"] = safety_brief(out.get("phase"))
+        return out
+
+    def _is_confirm(self, text: str) -> bool:
+        t = (text or "").strip().lower()
+        return any(w in t for w in CONFIRM_WORDS) or t in {"sim", "s", "ok", "certo", "isso"}
+
+    def _is_deny(self, text: str) -> bool:
+        t = (text or "").strip().lower()
+        return any(w in t for w in ("não", "nao", "errado", "errei", "repete", "de novo", "denovo"))
+
+    def _request_measurement_confirm(
+        self,
+        case: dict[str, Any],
+        result: dict[str, Any],
+        measured: str,
+    ) -> dict[str, Any]:
+        probe = result.get("probe") or {}
+        point = probe.get("point_name") or "ponto"
+        expected = probe.get("expected_value") or "?"
+        msg = (
+            f"Antes de ir para o modo solução, confirma: no **{point}** você mediu "
+            f"**{measured.strip()}** (esperado {expected})? "
+            "Responda **confirmo** para eu indicar a peça, ou **não** se errou a medição."
+        )
+        spoken = (
+            f"Confirma: no {point} você mediu {measured.strip()}? "
+            "Diga confirmo para eu indicar a peça, ou não se a medição estiver errada."
+        )
+        case["pending_confirm"] = {
+            "measured": measured,
+            "probe": probe,
+            "solution": result.get("solution"),
+            "result": result,
+        }
+        case["phase"] = "measure"
+        self.memory.add_message(
+            case,
+            "assistant",
+            msg,
+            meta={
+                "phase": "measure",
+                "mode": "diagnose",
+                "probe": probe,
+                "verdict": "pending",
+                "solution": None,
+                "next_action": "ask_confirm",
+                "spoken_reply": spoken,
+                "awaiting_confirm": True,
+            },
+        )
+        self.memory.save(case)
+        return {
+            "case": case,
+            "message": msg,
+            "spoken_reply": spoken,
+            "phase": "measure",
+            "mode": "diagnose",
+            "probe": probe,
+            "verdict": "pending",
+            "solution": None,
+            "next_action": "ask_confirm",
+            "awaiting_confirm": True,
+            "safety_brief": safety_brief("measure"),
+        }
+
+    def _finalize_confirmed_fail(self, case: dict[str, Any], pending: dict[str, Any]) -> dict[str, Any]:
+        result = dict(pending.get("result") or {})
+        result["verdict"] = "fail"
+        result["mode"] = "solution"
+        result["phase"] = "solution"
+        result["next_action"] = "ask_replace"
+        result["probe"] = pending.get("probe")
+        result["solution"] = pending.get("solution")
+        # reforça mensagem
+        sol = pending.get("solution") or {}
+        replace = sol.get("replace_first") or "a peça indicada"
+        result["assistant_message"] = (
+            f"Confirmado. Valor fora do esperado. Modo solução: troque primeiro **{replace}**. "
+            f"{sol.get('how_to_confirm') or ''} "
+            f"{safety_brief('solution')}"
+        ).strip()
+        result["spoken_reply"] = (
+            f"Confirmado. Entre em modo solução e troque primeiro {replace}."
+        )
+        case["pending_confirm"] = None
+        out = self._apply_result(case, result, user_visible=True)
+        out["safety_brief"] = safety_brief("solution")
+        return out
 
     def _apply_result(
         self,
@@ -135,14 +350,13 @@ class DiagnosticAgent:
         if update.get("notes"):
             case.setdefault("solution_notes", []).append(update["notes"])
 
-        # Registra medição se o último user message parece ter valor e há verdict ok/fail
         if verdict in ("ok", "fail") and probe:
             last_user = None
             for msg in reversed(case.get("messages", [])):
                 if msg.get("role") == "user":
                     last_user = msg.get("content", "")
                     break
-            if last_user:
+            if last_user and not re.search(r"confirm", last_user, re.I):
                 self.memory.add_measurement(
                     case,
                     point=probe.get("point_name") or "ponto",
@@ -180,7 +394,6 @@ class DiagnosticAgent:
                 },
             )
         else:
-            # Atualiza última mensagem do assistente se já criamos opening
             if case.get("messages") and case["messages"][-1]["role"] == "assistant":
                 case["messages"][-1]["content"] = message
                 case["messages"][-1]["meta"] = {

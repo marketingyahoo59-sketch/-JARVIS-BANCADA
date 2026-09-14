@@ -1,4 +1,4 @@
-"""Componente Streamlit: escuta contínua com Web Speech API (pt-BR)."""
+"""Componente Streamlit: escuta contínua com status ouvindo/processando/falando."""
 
 from __future__ import annotations
 
@@ -13,14 +13,21 @@ _listen = components.declare_component("jarvis_listen", path=str(_COMPONENT_DIR)
 def continuous_listen(
     *,
     active: bool = True,
-    key: str | None = None,
     paused: bool = False,
+    agent_speaking: bool = False,
+    key: str | None = None,
 ) -> str | None:
     """
     Escuta o microfone continuamente.
     Quando o usuário termina de falar (pausa natural), devolve o texto final.
     """
-    value = _listen(active=active, paused=paused, key=key, default=None)
+    value = _listen(
+        active=active,
+        paused=paused or agent_speaking,
+        agent_speaking=agent_speaking,
+        key=key,
+        default=None,
+    )
     if value is None:
         return None
     if isinstance(value, dict):

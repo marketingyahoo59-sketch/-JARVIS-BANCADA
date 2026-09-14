@@ -1,0 +1,24 @@
+{
+  "name": "JARVIS de Bancada",
+  "short_name": "JARVIS",
+  "description": "Assistente de diagnóstico eletrônico com voz",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/app/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/app/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
