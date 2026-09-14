@@ -438,7 +438,7 @@ def mock_response(
             },
         }
 
-    if not measurements and case.get("phase") in ("intake", None, "diagnosing"):
+    if not measurements and case.get("phase") in ("intake", "vision", None, "diagnosing"):
         return {
             "assistant_message": (
                 f"Caso aberto: {board} — “{case.get('symptom', '')}”. "

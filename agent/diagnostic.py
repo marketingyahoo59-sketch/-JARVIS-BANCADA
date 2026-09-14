@@ -17,25 +17,18 @@ class DiagnosticAgent:
 
     def start_case(self, board_model: str, symptom: str) -> dict[str, Any]:
         case = self.memory.create(board_model=board_model.strip(), symptom=symptom.strip())
-        opening = (
-            f"Placa: **{case['board_model']}**. Sintoma: **{case['symptom']}**.\n\n"
-            "Vou guiar o diagnóstico um passo por vez. "
-            "Envie uma foto nítida da placa para eu indicar onde colocar as pontas do multímetro."
-        )
-        self.memory.add_message(case, "assistant", opening, meta={"phase": "vision"})
-        case["phase"] = "vision"
         case["status"] = "diagnosing"
+        case["phase"] = "intake"
         self.memory.save(case)
 
-        # Primeira ordem estruturada via LLM/mock
         result = call_llm(
             case,
             user_text=(
                 f"Início do caso. Modelo da placa: {board_model}. "
-                f"Sintoma: {symptom}. Peça a foto e prepare o primeiro passo."
+                f"Sintoma: {symptom}. Peça a foto da placa e prepare o primeiro passo de medição."
             ),
         )
-        return self._apply_result(case, result, user_visible=False)
+        return self._apply_result(case, result, user_visible=True)
 
     def load_case(self, case_id: str) -> dict[str, Any] | None:
         return self.memory.load(case_id)
