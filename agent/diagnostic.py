@@ -89,6 +89,7 @@ class DiagnosticAgent:
         user_visible: bool = True,
     ) -> dict[str, Any]:
         message = result.get("assistant_message") or "Sem resposta do agente."
+        spoken = (result.get("spoken_reply") or message or "").strip()
         phase = result.get("phase") or case.get("phase") or "measure"
         mode = result.get("mode") or "diagnose"
         probe = result.get("probe")
@@ -145,6 +146,7 @@ class DiagnosticAgent:
                     "verdict": verdict,
                     "solution": solution,
                     "next_action": result.get("next_action"),
+                    "spoken_reply": spoken,
                 },
             )
         else:
@@ -158,6 +160,7 @@ class DiagnosticAgent:
                     "verdict": verdict,
                     "solution": solution,
                     "next_action": result.get("next_action"),
+                    "spoken_reply": spoken,
                 }
             self.memory.save(case)
 
@@ -165,6 +168,7 @@ class DiagnosticAgent:
         return {
             "case": case,
             "message": message,
+            "spoken_reply": spoken,
             "phase": phase,
             "mode": mode,
             "probe": probe,

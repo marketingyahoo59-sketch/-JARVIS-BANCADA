@@ -13,14 +13,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SYSTEM_PROMPT = """Você é um AGENTE DE DIAGNÓSTICO ELETRÔNICO ATIVO — o cérebro do conserto.
-O usuário é apenas as mãos: não sabe eletrônica. Você guia passo a passo com ordens claras.
+O usuário é apenas as mãos: não sabe eletrônica. Vocês conversam por VOZ e texto.
+Você guia passo a passo com ordens claras, como um técnico ao lado da bancada.
 
 IDIOMA (OBRIGATÓRIO):
 - TODO o texto visível ao usuário DEVE ser em português do Brasil.
-- Isso inclui: assistant_message, point_name, black_probe, red_probe, meter_mode, scale,
+- Isso inclui: assistant_message, spoken_reply, point_name, black_probe, red_probe, meter_mode, scale,
   expected_value, visual_hint, labels das coordenadas, reason, action, how_to_confirm, notes.
 - Nunca responda em inglês. Traduza termos técnicos quando possível (ex.: Continuity → Continuidade).
 - Nomes de componentes (C905, IC901) podem ficar como estão.
+
+ESTILO DE VOZ:
+- O usuário pode falar de forma solta (“deu um vírgula dois”, “troquei aquele capacitor e não resolveu”).
+- Interprete medições faladas (vírgula/ponto, volts, ohms, bip, aberto).
+- assistant_message: claro e curto (no máximo 4 frases).
+- spoken_reply: versão AINDA mais curta para ler em voz alta (1 a 3 frases), sem markdown, sem listas longas.
 
 REGRAS OBRIGATÓRIAS:
 1. Nunca entregue um manual completo. Sempre peça UMA medição por vez.
@@ -34,6 +41,7 @@ REGRAS OBRIGATÓRIAS:
 SCHEMA JSON:
 {
   "assistant_message": "texto curto para o usuário (ordens claras)",
+  "spoken_reply": "versão falada curta, 1 a 3 frases, sem markdown",
   "phase": "intake|vision|measure|solution|reassess|done",
   "mode": "diagnose|solution|reassess",
   "next_action": "ask_photo|ask_measurement|ask_replace|ask_confirm|done",
@@ -201,7 +209,7 @@ def _call_openai(
         ],
     )
     raw = response.choices[0].message.content or "{}"
-    return _extract_json(raw)
+    return _ensure_spoken(_extract_json(raw))
 
 
 def _call_anthropic(
@@ -248,10 +256,24 @@ def _call_anthropic(
         messages=[{"role": "user", "content": content}],
     )
     raw = "".join(block.text for block in response.content if block.type == "text")
-    return _extract_json(raw)
+    return _ensure_spoken(_extract_json(raw))
 
 
-def mock_response(
+def _ensure_spoken(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload.get("spoken_reply"):
+        msg = payload.get("assistant_message") or ""
+        # primeira frase ou até ~220 chars
+        cut = msg.split(". ")
+        spoken = cut[0].strip()
+        if not spoken.endswith("."):
+            spoken += "."
+        if len(spoken) > 220:
+            spoken = spoken[:220].rsplit(" ", 1)[0] + "."
+        payload["spoken_reply"] = spoken
+    return payload
+
+
+def _mock_response_raw(
     case: dict[str, Any],
     user_text: str,
     has_image: bool = False,
@@ -483,3 +505,12 @@ def mock_response(
             "notes": "Aguardando entrada do usuário",
         },
     }
+
+
+def mock_response(
+    case: dict[str, Any],
+    user_text: str,
+    has_image: bool = False,
+) -> dict[str, Any]:
+    return _ensure_spoken(_mock_response_raw(case, user_text, has_image=has_image))
+
