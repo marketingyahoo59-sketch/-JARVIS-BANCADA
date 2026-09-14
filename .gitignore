@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/cases/*.json
+data/uploads/*
+!data/cases/.gitkeep
+!data/uploads/.gitkeep
+.streamlit/secrets.toml
