@@ -12,6 +12,7 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 
+from agent.diagnostic import DiagnosticAgent
 from agent.listen_component import continuous_listen
 from agent.memory import CaseMemory
 from agent.voice import extract_intake_from_speech, speak_text, transcribe_audio

@@ -4,12 +4,14 @@ Aplicativo **ativo** de diagnóstico: a IA guia cada medição, interpreta o val
 
 ## O que faz
 
-1. **Voz** — você fala no microfone; a IA escuta (Whisper), analisa e **responde falando** (TTS).
-2. **Início** — diga (ou digite) o modelo da placa e o sintoma.
+1. **Voz mãos-livres** — escuta contínua (detecta fim da frase); a IA responde **falando**.
+2. **Início** — diga o modelo da placa e o sintoma (sem apertar enviar).
 3. **Visão** — upload de foto; a IA marca onde colocar as pontas do multímetro.
-4. **Loop** — pede uma medição por vez (ex.: “meça o pino 3 e me diga o valor”).
-5. **Decisão** — valor OK → próximo ponto; valor errado → **Modo Solução** (peça a trocar).
-6. **Memória** — histórico em `data/cases/` para reavaliar se o conserto falhar.
+4. **Loop** — pede uma medição por vez; você fala o valor.
+5. **Perguntas** — pode perguntar no meio (“o que é esse CI?”) e ela responde.
+6. **Pesquisa** — se precisar, busca referências na web do modelo/sintoma.
+7. **Decisão** — valor OK → próximo ponto; errado → **Modo Solução** (peça a trocar).
+8. **Memória** — histórico em `data/cases/` para reavaliar se o conserto falhar.
 
 ## Requisitos
 
