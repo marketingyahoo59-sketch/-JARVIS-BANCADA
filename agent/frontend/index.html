@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #0f172a;
+        --ok: #22c55e;
+        --warn: #f59e0b;
+        --mute: #94a3b8;
+        --text: #e2e8f0;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: transparent;
+        color: var(--text);
+      }
+      .wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #0f172a, #1e293b);
+        border: 1px solid #334155;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--mute);
+        flex-shrink: 0;
+      }
+      .dot.live {
+        background: var(--ok);
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+        animation: pulse 1.4s infinite;
+      }
+      .dot.wait {
+        background: var(--warn);
+      }
+      @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55); }
+        70% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+      }
+      .title { font-weight: 650; font-size: 14px; }
+      .sub { font-size: 12px; color: #94a3b8; }
+      .partial {
+        min-height: 1.3em;
+        font-size: 13px;
+        color: #cbd5e1;
+        font-style: italic;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 6px 10px;
+        background: #334155;
+        color: white;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button:hover { background: #475569; }
+      .err { color: #fca5a5; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="row">
+        <div id="dot" class="dot"></div>
+        <div>
+          <div class="title" id="title">Preparando microfone…</div>
+          <div class="sub" id="sub">Fale com naturalidade. Eu espero você terminar a frase.</div>
+        </div>
+        <button id="btn" type="button">Pausar</button>
+      </div>
+      <div class="partial" id="partial"></div>
+      <div class="err" id="err"></div>
+    </div>
+
+    <script>
+      const Streamlit = {
+        setComponentValue(value) {
+          window.parent.postMessage(
+            { isStreamlitMessage: true, type: "streamlit:setComponentValue", value },
+            "*"
+          );
+        },
+        setFrameHeight(height) {
+          window.parent.postMessage(
+            { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height },
+            "*"
+          );
+        },
+        RENDER_EVENT: "streamlit:render",
+        events: {
+          addEventListener(type, callback) {
+            window.addEventListener("message", (event) => {
+              if (event.data && event.data.type === type) callback(event);
+            });
+          },
+        },
+      };
+
+      const dot = document.getElementById("dot");
+      const title = document.getElementById("title");
+      const sub = document.getElementById("sub");
+      const partial = document.getElementById("partial");
+      const err = document.getElementById("err");
+      const btn = document.getElementById("btn");
+
+      let recognition = null;
+      let paused = false;
+      let active = true;
+      let lastSent = "";
+      let restartTimer = null;
+      let speakingPauseMs = 1400;
+
+      function setUI(state, msg) {
+        err.textContent = "";
+        if (state === "live") {
+          dot.className = "dot live";
+          title.textContent = "Escutando…";
+          sub.textContent = msg || "Pode falar. Quando pausar, eu processo a frase.";
+          btn.textContent = "Pausar";
+        } else if (state === "wait") {
+          dot.className = "dot wait";
+          title.textContent = "Processando fala…";
+          sub.textContent = msg || "Aguarde a resposta do agente.";
+          btn.textContent = "Pausar";
+        } else if (state === "paused") {
+          dot.className = "dot";
+          title.textContent = "Microfone pausado";
+          sub.textContent = msg || "Clique em Retomar para continuar a conversa.";
+          btn.textContent = "Retomar";
+        } else {
+          dot.className = "dot";
+          title.textContent = "Microfone indisponível";
+          sub.textContent = msg || "Use Chrome/Edge e permita o microfone.";
+        }
+        Streamlit.setFrameHeight(document.body.scrollHeight);
+      }
+
+      function sendFinal(text) {
+        const clean = (text || "").trim();
+        if (!clean || clean === lastSent) return;
+        lastSent = clean;
+        setUI("wait", "Ouvi sua frase. Enviando ao agente…");
+        Streamlit.setComponentValue({
+          transcript: clean,
+          ts: Date.now(),
+        });
+      }
+
+      function startRecognition() {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) {
+          setUI("err", "Este navegador não tem reconhecimento de voz contínuo. Use Chrome ou Edge.");
+          return;
+        }
+        if (recognition) {
+          try { recognition.onend = null; recognition.stop(); } catch (e) {}
+          recognition = null;
+        }
+        recognition = new SR();
+        recognition.lang = "pt-BR";
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        let buffer = "";
+        let silenceTimer = null;
+
+        recognition.onstart = () => {
+          if (!paused && active) setUI("live");
+        };
+
+        recognition.onerror = (event) => {
+          if (event.error === "not-allowed") {
+            setUI("err", "Permissão de microfone negada. Autorize e recarregue.");
+            return;
+          }
+          if (event.error === "no-speech" || event.error === "aborted") return;
+          err.textContent = "Aviso do microfone: " + event.error;
+        };
+
+        recognition.onresult = (event) => {
+          let interim = "";
+          let finalChunk = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const res = event.results[i];
+            if (res.isFinal) finalChunk += res[0].transcript;
+            else interim += res[0].transcript;
+          }
+          if (interim) partial.textContent = "… " + interim;
+          if (finalChunk) {
+            buffer = (buffer + " " + finalChunk).replace(/\s+/g, " ").trim();
+            partial.textContent = buffer;
+            if (silenceTimer) clearTimeout(silenceTimer);
+            // Espera pausa natural após o fim do bloco final
+            silenceTimer = setTimeout(() => {
+              if (buffer) {
+                sendFinal(buffer);
+                buffer = "";
+                partial.textContent = "";
+              }
+            }, speakingPauseMs);
+          }
+          Streamlit.setFrameHeight(document.body.scrollHeight);
+        };
+
+        recognition.onend = () => {
+          if (!paused && active) {
+            restartTimer = setTimeout(() => {
+              try { recognition.start(); } catch (e) {}
+            }, 250);
+          }
+        };
+
+        try {
+          recognition.start();
+          setUI("live");
+        } catch (e) {
+          setUI("err", "Não consegui iniciar o microfone.");
+        }
+      }
+
+      btn.onclick = () => {
+        paused = !paused;
+        if (paused) {
+          if (recognition) {
+            try { recognition.onend = null; recognition.stop(); } catch (e) {}
+          }
+          setUI("paused");
+        } else {
+          lastSent = "";
+          startRecognition();
+        }
+      };
+
+      function onRender(event) {
+        const data = (event.data && event.data.args) || {};
+        active = data.active !== false;
+        if (data.paused === true) {
+          paused = true;
+          if (recognition) {
+            try { recognition.onend = null; recognition.stop(); } catch (e) {}
+          }
+          setUI("paused", "Aguardando o agente terminar de falar…");
+          return;
+        }
+        if (!active) {
+          paused = true;
+          setUI("paused", "Escuta desligada.");
+          return;
+        }
+        if (!recognition || paused) {
+          paused = false;
+          startRecognition();
+        }
+      }
+
+      Streamlit.events.addEventListener("streamlit:render", onRender);
+      // first paint
+      window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+      Streamlit.setFrameHeight(120);
+      startRecognition();
+    </script>
+  </body>
+</html>

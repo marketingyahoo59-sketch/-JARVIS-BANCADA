@@ -6,6 +6,7 @@ from typing import Any
 
 from .llm import call_llm, provider_status
 from .memory import CaseMemory
+from .research import research_for_case
 
 
 class DiagnosticAgent:
@@ -21,12 +22,15 @@ class DiagnosticAgent:
         case["phase"] = "intake"
         self.memory.save(case)
 
+        research = research_for_case(case)
         result = call_llm(
             case,
             user_text=(
                 f"Início do caso. Modelo da placa: {board_model}. "
-                f"Sintoma: {symptom}. Peça a foto da placa e prepare o primeiro passo de medição."
+                f"Sintoma: {symptom}. Peça a foto da placa e prepare o primeiro passo de medição. "
+                "Se souber falhas comuns deste modelo pela pesquisa, mencione em 1 frase."
             ),
+            research_notes=research or None,
         )
         return self._apply_result(case, result, user_visible=True)
 
@@ -58,7 +62,33 @@ class DiagnosticAgent:
                 "e peça UMA medição específica.]"
             )
 
-        result = call_llm(case, prompt, image_bytes=image_bytes, image_mime=image_mime)
+        # Pesquisa quando pergunta aberta, modelo específico, ou pedido explícito
+        lowered = user_text.lower()
+        should_research = any(
+            k in lowered
+            for k in (
+                "?",
+                "o que é",
+                "por que",
+                "porque",
+                "esquema",
+                "datasheet",
+                "pesquisa",
+                "não sei",
+                "nao sei",
+                "procura",
+                "busca",
+            )
+        ) or bool(case.get("board_model"))
+        research = research_for_case(case, user_text) if should_research else ""
+
+        result = call_llm(
+            case,
+            prompt,
+            image_bytes=image_bytes,
+            image_mime=image_mime,
+            research_notes=research or None,
+        )
 
         if image_bytes and image_name:
             probe = result.get("probe") or {}

@@ -50,7 +50,7 @@ def speak_text(text: str, voice: str | None = None) -> bytes:
             voice=voice_name,
             input=clean,
             response_format="mp3",
-            instructions="Fale em português do Brasil, claro, calmo e objetivo, como um técnico guia.",
+            instructions="Fale em português do Brasil, claro, calmo e objetivo, como um técnico guia parceiro de bancada.",
         )
     except Exception:
         # fallback para tts-1 se o modelo novo não estiver disponível na conta
@@ -61,6 +61,9 @@ def speak_text(text: str, voice: str | None = None) -> bytes:
             response_format="mp3",
         )
     return response.content
+
+
+# aliases usados pela UI
 
 
 def _for_speech(text: str) -> str:
@@ -104,3 +107,7 @@ def extract_intake_from_speech(transcript: str) -> dict[str, str]:
         "board_model": str(data.get("board_model") or transcript[:80]).strip(),
         "symptom": str(data.get("symptom") or transcript).strip(),
     }
+
+
+speak_text = speak_text
+transcribe_audio = transcribe_audio

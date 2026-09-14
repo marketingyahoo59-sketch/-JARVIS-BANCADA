@@ -1,22 +1,23 @@
 """
-Agente de Diagnóstico Eletrônico — Streamlit
-Conversa por voz: você fala, a IA escuta, analisa e responde falando.
+JARVIS de Bancada — Agente de Diagnóstico Eletrônico
+Escuta contínua + fala automática + pesquisa quando precisa.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
 from pathlib import Path
 
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 
-from agent.diagnostic import DiagnosticAgent
+from agent.listen_component import continuous_listen
 from agent.memory import CaseMemory
 from agent.voice import extract_intake_from_speech, speak_text, transcribe_audio
 
 st.set_page_config(
-    page_title="Agente de Diagnóstico Eletrônico",
+    page_title="JARVIS de Bancada",
     page_icon="🔧",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -72,7 +73,10 @@ def ensure_session() -> None:
     st.session_state.setdefault("last_image_name", None)
     st.session_state.setdefault("last_tts_bytes", None)
     st.session_state.setdefault("voice_out", True)
+    st.session_state.setdefault("listen_on", True)
     st.session_state.setdefault("pending_transcript", "")
+    st.session_state.setdefault("last_voice_hash", "")
+    st.session_state.setdefault("agent_speaking", False)
 
 
 def annotate_image(image_bytes: bytes, coordinates: list[dict]) -> Image.Image:
@@ -113,15 +117,18 @@ def play_agent_voice(text: str) -> None:
     if not st.session_state.voice_out or not (text or "").strip():
         return
     try:
+        st.session_state.agent_speaking = True
         audio = speak_text(text)
         st.session_state.last_tts_bytes = audio
         st.audio(audio, format="audio/mp3", autoplay=True)
     except Exception as exc:  # noqa: BLE001
         st.warning(f"Não consegui gerar a voz do agente: {exc}")
+    finally:
+        st.session_state.agent_speaking = False
 
 
 def render_probe_card(probe: dict | None) -> None:
-    if not probe:
+    if not probe or not probe.get("point_name"):
         return
     st.markdown("#### Ordem de medição")
     c1, c2 = st.columns(2)
@@ -155,6 +162,10 @@ def render_solution(solution: dict | None) -> None:
         st.warning(solution["how_to_confirm"])
 
 
+def _voice_hash(text: str) -> str:
+    return hashlib.sha1(text.strip().lower().encode("utf-8")).hexdigest()
+
+
 def submit_user_turn(
     ag: DiagnosticAgent,
     case: dict,
@@ -164,7 +175,7 @@ def submit_user_turn(
     image_mime: str = "image/jpeg",
 ) -> None:
     st.session_state.case_id = case["case_id"]
-    with st.spinner("Agente ouvindo e analisando…"):
+    with st.spinner("JARVIS analisando…"):
         try:
             result = ag.handle_user(
                 case,
@@ -180,12 +191,31 @@ def submit_user_turn(
     st.rerun()
 
 
+def consume_continuous_voice(key: str) -> str | None:
+    """Escuta contínua: devolve texto novo quando o usuário termina de falar."""
+    if not st.session_state.listen_on:
+        st.info("Escuta contínua desligada. Ligue na barra lateral ou use o gravador abaixo.")
+        return None
+    transcript = continuous_listen(
+        active=True,
+        paused=bool(st.session_state.agent_speaking),
+        key=key,
+    )
+    if not transcript:
+        return None
+    digest = _voice_hash(transcript)
+    if digest == st.session_state.last_voice_hash:
+        return None
+    st.session_state.last_voice_hash = digest
+    return transcript
+
+
 def sidebar_cases(ag: DiagnosticAgent) -> None:
-    st.sidebar.title("Casos salvos")
+    st.sidebar.title("JARVIS de Bancada")
     info = ag.provider_info()
     if info.get("mock"):
         st.sidebar.warning(
-            "Sem API key — modo demo. Para voz + IA, configure `OPENAI_API_KEY` no `.env`."
+            "Sem API key — modo demo. Configure `OPENAI_API_KEY` no `.env`."
         )
     else:
         nome = pt(PROVIDER_PT, info.get("active"), "IA")
@@ -194,7 +224,12 @@ def sidebar_cases(ag: DiagnosticAgent) -> None:
     st.session_state.voice_out = st.sidebar.toggle(
         "Agente fala as respostas",
         value=st.session_state.voice_out,
-        help="Usa a voz da OpenAI para ler a ordem em voz alta.",
+        help="Lê a ordem em voz alta (TTS).",
+    )
+    st.session_state.listen_on = st.sidebar.toggle(
+        "Escuta contínua (mãos livres)",
+        value=st.session_state.listen_on,
+        help="Ouve sem apertar botão. Detecta quando você termina a frase.",
     )
 
     cases = ag.list_cases()
@@ -225,59 +260,60 @@ def sidebar_cases(ag: DiagnosticAgent) -> None:
         st.session_state.last_image_name = None
         st.session_state.last_tts_bytes = None
         st.session_state.pending_transcript = ""
+        st.session_state.last_voice_hash = ""
         st.rerun()
 
 
 def intake_form(ag: DiagnosticAgent) -> None:
-    st.markdown("## Agente de Diagnóstico Eletrônico")
+    st.markdown("## JARVIS de Bancada")
     st.markdown(
-        "Fale comigo como na bancada: **diga o aparelho/placa e o sintoma**. "
-        "Eu escuto, analiso e te guio — você só executa."
+        "Fale naturalmente: **modelo da placa + sintoma**. "
+        "Eu escuto até você terminar a frase, analiso e respondo falando."
     )
 
-    st.markdown("### 1) Comece falando")
-    voice = st.audio_input(
-        "Grave e diga, por exemplo: “Fonte Philco PTV32, não liga, LED apaga”"
-    )
-    if voice is not None and st.button(
-        "Ouvir e abrir caso", type="primary", use_container_width=True
-    ):
-        audio_bytes = voice.getvalue()
-        with st.spinner("Transcrevendo sua fala…"):
+    st.markdown("### Microfone contínuo")
+    heard = consume_continuous_voice(key="listen_intake")
+    if heard:
+        st.success(f"Ouvi: “{heard}”")
+        with st.spinner("Entendendo e abrindo o caso…"):
             try:
-                transcript = transcribe_audio(audio_bytes, filename=voice.name or "inicio.wav")
-                intake = extract_intake_from_speech(transcript)
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Não consegui entender o áudio: {exc}")
-                st.stop()
-        st.info(f"Entendi: **{intake['board_model']}** — {intake['symptom']}")
-        with st.spinner("Abrindo diagnóstico…"):
-            try:
+                intake = extract_intake_from_speech(heard)
                 result = ag.start_case(intake["board_model"], intake["symptom"])
             except Exception as exc:  # noqa: BLE001
-                st.error(f"Falha ao iniciar caso: {exc}")
+                st.error(f"Falha ao iniciar: {exc}")
                 st.stop()
         st.session_state.case_id = result["case"]["case_id"]
         play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
         st.rerun()
 
-    with st.expander("Prefere digitar em vez de falar?"):
+    with st.expander("Alternativa: gravar um áudio ou digitar"):
+        voice = st.audio_input("Gravação manual (opcional)")
+        if voice is not None:
+            # auto-processa sem botão extra
+            digest = hashlib.sha1(voice.getvalue()).hexdigest()
+            if digest != st.session_state.get("last_manual_audio_hash"):
+                st.session_state.last_manual_audio_hash = digest
+                with st.spinner("Transcrevendo…"):
+                    try:
+                        transcript = transcribe_audio(
+                            voice.getvalue(), filename=voice.name or "inicio.wav"
+                        )
+                        intake = extract_intake_from_speech(transcript)
+                        result = ag.start_case(intake["board_model"], intake["symptom"])
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Falha: {exc}")
+                        st.stop()
+                st.session_state.case_id = result["case"]["case_id"]
+                play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
+                st.rerun()
+
         with st.form("intake"):
-            board = st.text_input(
-                "Modelo da placa",
-                placeholder="Ex: Fonte TV Philco PTV32G50 / Placa PCI-MAIN-XXXX",
-            )
-            symptom = st.text_area(
-                "Sintoma",
-                placeholder="Ex: Não liga, LED standby apaga, sem 5V, cheiro de queimado…",
-                height=100,
-            )
-            submitted = st.form_submit_button(
-                "Iniciar diagnóstico", type="primary", use_container_width=True
-            )
+            board = st.text_input("Modelo da placa", placeholder="Ex: Philco PTV32 / fonte SMPS")
+            symptom = st.text_area("Sintoma", placeholder="Ex: Não liga, LED apaga…", height=90)
+            submitted = st.form_submit_button("Iniciar", type="primary", use_container_width=True)
         if submitted:
             if not board.strip() or not symptom.strip():
-                st.error("Informe o modelo da placa e o sintoma.")
+                st.error("Informe placa e sintoma.")
                 return
             result = ag.start_case(board, symptom)
             st.session_state.case_id = result["case"]["case_id"]
@@ -311,7 +347,7 @@ def case_view(ag: DiagnosticAgent) -> None:
         for msg in case.get("messages", []):
             papel = "assistant" if msg["role"] == "assistant" else "user"
             with st.chat_message(papel):
-                autor = "Agente" if msg["role"] == "assistant" else "Você"
+                autor = "JARVIS" if msg["role"] == "assistant" else "Você"
                 st.caption(autor)
                 st.markdown(msg["content"])
                 meta = msg.get("meta") or {}
@@ -327,46 +363,65 @@ def case_view(ag: DiagnosticAgent) -> None:
                 break
 
         st.divider()
-        st.markdown("#### Fale com o agente")
+        st.markdown("#### Fale com o JARVIS")
         if last_meta.get("next_action") == "ask_photo":
-            st.caption("Anexe a foto abaixo e diga “foto enviada”.")
+            st.caption("Pode anexar a foto e dizer “foto enviada”.")
         else:
-            st.caption('Ex.: “deu quatro vírgula oito volts” · “troquei o C905 e não resolveu”')
+            st.caption('Fale naturalmente: “deu 4 vírgula 8 volts”, “o que é esse CI?”, “troquei e não resolveu”.')
 
-        audio = st.audio_input("Microfone — grave sua resposta")
-        if audio is not None and st.button(
-            "Enviar áudio ao agente", type="primary", use_container_width=True
-        ):
-            with st.spinner("Transcrevendo…"):
-                try:
-                    transcript = transcribe_audio(
-                        audio.getvalue(), filename=audio.name or "resposta.wav"
+        heard = consume_continuous_voice(key=f"listen_case_{case['case_id']}")
+        if heard:
+            st.success(f"Ouvi: “{heard}”")
+            submit_user_turn(ag, case, heard)
+
+        with st.expander("Foto, áudio manual ou texto"):
+            photo = st.file_uploader(
+                "Foto da placa",
+                type=["jpg", "jpeg", "png", "webp"],
+                key=f"photo_{case['case_id']}",
+            )
+            manual = st.audio_input("Gravação manual (se a escuta contínua falhar)")
+            if manual is not None:
+                digest = hashlib.sha1(manual.getvalue()).hexdigest()
+                if digest != st.session_state.get("last_manual_audio_hash"):
+                    st.session_state.last_manual_audio_hash = digest
+                    with st.spinner("Transcrevendo…"):
+                        try:
+                            transcript = transcribe_audio(
+                                manual.getvalue(), filename=manual.name or "fala.wav"
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"Áudio: {exc}")
+                            st.stop()
+                    image_bytes = None
+                    image_name = None
+                    image_mime = "image/jpeg"
+                    if photo is not None:
+                        image_bytes = photo.getvalue()
+                        image_name = photo.name
+                        image_mime = photo.type or "image/jpeg"
+                        st.session_state.last_image_bytes = image_bytes
+                        st.session_state.last_image_name = image_name
+                        (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                    submit_user_turn(
+                        ag,
+                        case,
+                        transcript,
+                        image_bytes=image_bytes,
+                        image_name=image_name,
+                        image_mime=image_mime,
                     )
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"Não entendi o áudio: {exc}")
-                    st.stop()
-            st.session_state.pending_transcript = transcript
-            st.success(f"Ouvi: “{transcript}”")
-            submit_user_turn(ag, case, transcript)
 
-        with st.expander("Texto, foto ou correção manual"):
             with st.form("reply", clear_on_submit=True):
-                photo = st.file_uploader(
-                    "Foto da placa (opcional)",
-                    type=["jpg", "jpeg", "png", "webp"],
-                )
                 user_text = st.text_input(
                     "Mensagem / valor medido",
                     value=st.session_state.pending_transcript,
-                    placeholder="Digite se preferir não usar o microfone",
+                    placeholder="Digite se preferir",
                 )
-                send = st.form_submit_button(
-                    "Enviar texto/foto", type="secondary", use_container_width=True
-                )
-
+                send = st.form_submit_button("Enviar texto/foto", use_container_width=True)
             if send:
                 if not user_text.strip() and photo is None:
-                    st.warning("Digite uma medição/mensagem ou anexe uma foto.")
+                    st.warning("Digite algo ou anexe foto.")
                 else:
                     image_bytes = None
                     image_name = None
@@ -378,8 +433,7 @@ def case_view(ag: DiagnosticAgent) -> None:
                         image_mime = photo.type or "image/jpeg"
                         st.session_state.last_image_bytes = image_bytes
                         st.session_state.last_image_name = image_name
-                        dest = UPLOAD_DIR / f"{case['case_id']}_{image_name}"
-                        dest.write_bytes(image_bytes)
+                        (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
                     st.session_state.pending_transcript = ""
                     submit_user_turn(
                         ag,
@@ -408,24 +462,23 @@ def case_view(ag: DiagnosticAgent) -> None:
                 hide_index=True,
             )
         else:
-            st.caption("Nenhuma medição registrada ainda.")
+            st.caption("Nenhuma medição ainda.")
 
         suspects = case.get("suspect_components") or []
         if suspects:
             st.markdown("**Suspeitos:** " + ", ".join(f"`{s}`" for s in suspects))
 
         if st.session_state.last_image_bytes:
-            st.markdown("### Foto + marcação das pontas")
+            st.markdown("### Foto + marcação")
             coords = []
             if last_meta.get("probe"):
                 coords = last_meta["probe"].get("coordinates") or []
             if not coords and case.get("probe_hints"):
                 coords = (case["probe_hints"][-1] or {}).get("coordinates") or []
             if coords:
-                annotated = annotate_image(st.session_state.last_image_bytes, coords)
                 st.image(
-                    annotated,
-                    caption="Cruzes = onde colocar as pontas",
+                    annotate_image(st.session_state.last_image_bytes, coords),
+                    caption="Cruzes = pontas",
                     use_container_width=True,
                 )
             else:
@@ -434,12 +487,10 @@ def case_view(ag: DiagnosticAgent) -> None:
                     caption=st.session_state.last_image_name or "placa",
                     use_container_width=True,
                 )
-        elif case.get("images"):
-            st.caption(f"{len(case['images'])} análise(s) de imagem no histórico deste caso.")
 
         notes = case.get("solution_notes") or []
         if notes:
-            with st.expander("Notas de solução / reavaliação"):
+            with st.expander("Notas / reavaliação"):
                 for n in notes[-8:]:
                     st.write(n)
 
