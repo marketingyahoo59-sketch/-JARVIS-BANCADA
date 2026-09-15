@@ -67,8 +67,18 @@ html, body, [class*="css"] { font-family: 'Rajdhani', sans-serif !important; }
   color: #E8F3FF;
 }
 
-header[data-testid="stHeader"] { background: transparent !important; }
+header[data-testid="stHeader"] {
+  background: transparent !important;
+  pointer-events: none !important;
+}
 #MainMenu, footer, [data-testid="stToolbar"] { visibility: hidden; height: 0; }
+
+/* HUD decorativo não pode roubar cliques do menu */
+.j-shell, .j-shell * { pointer-events: none !important; }
+div[data-testid="stMarkdownContainer"]:has(.j-shell),
+div[data-testid="element-container"]:has(.j-shell) {
+  pointer-events: none !important;
+}
 
 .block-container {
   padding-top: .85rem !important;
@@ -163,20 +173,21 @@ header[data-testid="stHeader"] { background: transparent !important; }
   position: relative; z-index: 2;
   pointer-events: auto !important;
 }
+.j-shell { pointer-events: none !important; }
+.j-shell * { pointer-events: none !important; }
 div[data-testid="stSegmentedControl"] {
   position: relative; z-index: 90;
   pointer-events: auto !important;
   margin-bottom: .75rem;
 }
 div[data-testid="stSegmentedControl"] button,
-div[data-testid="stSegmentedControl"] label {
+div[data-testid="stSegmentedControl"] label,
+div[data-testid="stSegmentedControl"] * {
   pointer-events: auto !important;
   font-family:'Orbitron',sans-serif !important;
   font-size:.72rem !important;
   letter-spacing:.04em !important;
 }
-.j-shell { pointer-events: none; }
-.j-shell * { pointer-events: none; }
 div[data-testid="stChatMessage"] {
   background: rgba(8,18,34,.72) !important;
   border: 1px solid rgba(0,209,255,.18) !important;
