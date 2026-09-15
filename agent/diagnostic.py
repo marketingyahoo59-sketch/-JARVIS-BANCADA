@@ -548,7 +548,12 @@ class DiagnosticAgent:
         if (result.get("verdict") == "fail") and result.get("solution"):
             return self._request_measurement_confirm(case, result, user_text)
 
-        out = self._apply_result(case, result, user_visible=True)
+        out = self._apply_result(
+            case,
+            result,
+            user_visible=True,
+            has_image=image_bytes is not None,
+        )
         out["safety_brief"] = safety_brief(out.get("phase"))
         return out
 
@@ -644,6 +649,8 @@ class DiagnosticAgent:
         case: dict[str, Any],
         result: dict[str, Any],
         user_visible: bool = True,
+        *,
+        has_image: bool = False,
     ) -> dict[str, Any]:
         message = result.get("assistant_message") or "Sem resposta do agente."
         spoken = (result.get("spoken_reply") or message or "").strip()
@@ -685,7 +692,7 @@ class DiagnosticAgent:
                 case["diagnostic_map"]["current_step"] = max(1, min(3, int(step)))
             except (TypeError, ValueError):
                 pass
-        if image_bytes and case.get("diagnostic_map"):
+        if has_image and case.get("diagnostic_map"):
             # foto recebida → pode avançar para medições se ainda no passo 1
             if int(case["diagnostic_map"].get("current_step") or 1) == 1:
                 case["diagnostic_map"]["current_step"] = 2
