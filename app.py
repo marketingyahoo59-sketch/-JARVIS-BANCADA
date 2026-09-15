@@ -237,13 +237,13 @@ def sidebar_cases(ag: DiagnosticAgent) -> None:
         "Escuta contínua (mãos livres)", value=st.session_state.listen_on
     )
 
-    with st.sidebar.expander("Checklist de segurança"):
+    with st.sidebar.expander("Checklist de segurança", expanded=True):
         for item in safety_checklist():
             st.markdown(f"**{item['title']}** — {item['detail']}")
-        st.session_state.safety_ack = st.checkbox(
-            "Li os avisos de segurança desta sessão",
-            value=st.session_state.safety_ack,
-        )
+    st.session_state.safety_ack = st.sidebar.checkbox(
+        "Li os avisos de segurança desta sessão",
+        value=st.session_state.safety_ack,
+    )
 
     with st.sidebar.expander("Banco de falhas resolvidas"):
         fails = list_failures(12)
