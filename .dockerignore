@@ -1,0 +1,9 @@
+.venv
+__pycache__
+*.pyc
+.env
+.git
+data/cases/*.json
+data/uploads/*
+data/sensors/*
+!data/**/.gitkeep
