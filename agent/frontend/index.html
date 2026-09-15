@@ -4,57 +4,56 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
-      body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: transparent; color: #e2e8f0; }
-      .wrap { display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:12px;
+      html, body { margin: 0; padding: 0; overflow: hidden; background: transparent; color: #e2e8f0;
+        font-family: "Segoe UI", system-ui, sans-serif; }
+      .wrap { box-sizing: border-box; height: 120px; display:flex; flex-direction:column; gap:6px;
+        padding:10px 12px; border-radius:12px;
         background:linear-gradient(135deg,#0f172a,#1e293b); border:1px solid #334155; }
       .row { display:flex; align-items:center; gap:10px; }
       .dot { width:12px; height:12px; border-radius:50%; background:#94a3b8; flex-shrink:0; }
-      .dot.live { background:#22c55e; animation: pulse 1.4s infinite; }
+      .dot.live { background:#22c55e; box-shadow: 0 0 0 0 rgba(34,197,94,.55); animation: pulse 1.4s infinite; }
       .dot.wait { background:#f59e0b; }
-      .dot.speak { background:#38bdf8; animation: pulse 1.1s infinite; }
+      .dot.speak { background:#38bdf8; }
+      .dot.off { background:#475569; }
       @keyframes pulse {
         0% { box-shadow: 0 0 0 0 rgba(34,197,94,.55); }
-        70% { box-shadow: 0 0 0 12px rgba(34,197,94,0); }
+        70% { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
         100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
       }
-      .title { font-weight:650; font-size:14px; }
-      .sub { font-size:12px; color:#94a3b8; }
-      .partial { min-height:1.3em; font-size:13px; color:#cbd5e1; font-style:italic; }
-      .status-pill { font-size:11px; padding:3px 8px; border-radius:999px; background:#334155; white-space:nowrap; }
+      .title { font-weight:650; font-size:13px; }
+      .sub { font-size:11px; color:#94a3b8; }
+      .partial { min-height:1.1em; font-size:12px; color:#cbd5e1; font-style:italic;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .status-pill { font-size:10px; padding:3px 8px; border-radius:999px; background:#334155; white-space:nowrap; }
       button { border:0; border-radius:8px; padding:6px 10px; background:#334155; color:#fff; cursor:pointer; font-size:12px; }
       button:hover { background:#475569; }
-      .err { color:#fca5a5; font-size:12px; }
+      .err { color:#fca5a5; font-size:11px; min-height:1em; }
     </style>
   </head>
   <body>
     <div class="wrap">
       <div class="row">
-        <div id="dot" class="dot"></div>
-        <div style="flex:1">
-          <div class="title" id="title">Preparando microfone…</div>
-          <div class="sub" id="sub">Fale com naturalidade. Eu espero você terminar a frase.</div>
+        <div id="dot" class="dot off"></div>
+        <div style="flex:1; min-width:0">
+          <div class="title" id="title">Microfone em espera</div>
+          <div class="sub" id="sub">Ligue “Escuta contínua” no painel para falar.</div>
         </div>
-        <span class="status-pill" id="pill">—</span>
+        <span class="status-pill" id="pill">OFF</span>
         <button id="btn" type="button">Pausar</button>
       </div>
       <div class="partial" id="partial"></div>
       <div class="err" id="err"></div>
     </div>
     <script>
+      // Protocolo oficial Streamlit custom component (mensagens estáveis).
+      function sendMessage(type, data) {
+        const msg = Object.assign({ isStreamlitMessage: true, type: type }, data || {});
+        window.parent.postMessage(msg, "*");
+      }
       const Streamlit = {
-        setComponentValue(value) {
-          window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setComponentValue", value }, "*");
-        },
-        setFrameHeight(height) {
-          window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:setFrameHeight", height }, "*");
-        },
-        events: {
-          addEventListener(type, callback) {
-            window.addEventListener("message", (event) => {
-              if (event.data && event.data.type === type) callback(event);
-            });
-          },
-        },
+        setComponentValue(value) { sendMessage("streamlit:setComponentValue", { value: value }); },
+        setFrameHeight(height) { sendMessage("streamlit:setFrameHeight", { height: height }); },
+        setComponentReady() { sendMessage("streamlit:componentReady", { apiVersion: 1 }); },
       };
 
       const dot = document.getElementById("dot");
@@ -66,96 +65,115 @@
       const pill = document.getElementById("pill");
 
       let recognition = null;
-      let paused = false;
-      let active = true;
-      let agentSpeaking = false;
+      let userPaused = false;
+      let active = false;
+      let agentSpeaking = true; // começa pausado até receber render
       let lastSent = "";
       let restartTimer = null;
+      let silenceTimer = null;
+      let buffer = "";
       const speakingPauseMs = 1400;
+      const FIXED_HEIGHT = 132;
+      let startedOnce = false;
 
       function setUI(state, msg) {
         err.textContent = "";
         if (state === "live") {
           dot.className = "dot live";
           title.textContent = "Ouvindo…";
-          sub.textContent = msg || "Pode falar. Quando pausar, eu processo a frase.";
+          sub.textContent = msg || "Fale. Quando pausar, eu envio a frase.";
           pill.textContent = "OUVINDO";
           btn.textContent = "Pausar";
         } else if (state === "wait") {
           dot.className = "dot wait";
-          title.textContent = "Processando fala…";
-          sub.textContent = msg || "Aguarde a resposta do agente.";
+          title.textContent = "Processando…";
+          sub.textContent = msg || "Aguarde a resposta do JARVIS.";
           pill.textContent = "PROCESSANDO";
           btn.textContent = "Pausar";
         } else if (state === "speak") {
           dot.className = "dot speak";
-          title.textContent = "Agente falando…";
-          sub.textContent = msg || "Microfone pausado enquanto o JARVIS fala.";
+          title.textContent = "JARVIS falando…";
+          sub.textContent = msg || "Microfone pausado.";
           pill.textContent = "FALANDO";
           btn.textContent = "Pausar";
         } else if (state === "paused") {
           dot.className = "dot";
           title.textContent = "Microfone pausado";
-          sub.textContent = msg || "Clique em Retomar para continuar.";
+          sub.textContent = msg || "Clique em Retomar.";
           pill.textContent = "PAUSADO";
           btn.textContent = "Retomar";
+        } else if (state === "off") {
+          dot.className = "dot off";
+          title.textContent = "Escuta desligada";
+          sub.textContent = msg || "Ligue “Escuta contínua” acima.";
+          pill.textContent = "OFF";
+          btn.textContent = "Pausar";
         } else {
           dot.className = "dot";
           title.textContent = "Microfone indisponível";
           sub.textContent = msg || "Use Chrome/Edge e permita o microfone.";
           pill.textContent = "ERRO";
         }
-        Streamlit.setFrameHeight(document.body.scrollHeight);
+        // Altura fixa — não chamar setFrameHeight em loop.
+        Streamlit.setFrameHeight(FIXED_HEIGHT);
+      }
+
+      function stopRecognition(hard) {
+        if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+        if (recognition) {
+          try {
+            recognition.onend = null;
+            recognition.onresult = null;
+            recognition.onerror = null;
+            recognition.stop();
+          } catch (e) {}
+          recognition = null;
+        }
+        if (hard) {
+          buffer = "";
+          partial.textContent = "";
+        }
       }
 
       function sendFinal(text) {
         const clean = (text || "").trim();
         if (!clean || clean === lastSent) return;
         lastSent = clean;
-        // Para o microfone imediatamente — evita remount/removeChild no Streamlit
-        // enquanto o backend fica em “JARVIS sincronizando…”.
         agentSpeaking = true;
-        if (recognition) {
-          try { recognition.onend = null; recognition.stop(); } catch (e) {}
-          recognition = null;
-        }
-        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
-        setUI("wait", "Ouvi sua frase. Enviando ao agente…");
+        stopRecognition(true);
+        setUI("wait", "Ouvi sua frase. Enviando…");
         Streamlit.setComponentValue({ transcript: clean, ts: Date.now(), status: "processing" });
       }
 
       function startRecognition() {
+        if (!active || userPaused || agentSpeaking) return;
         const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SR) {
-          setUI("err", "Este navegador não tem reconhecimento contínuo. Use Chrome ou Edge.");
+          setUI("err", "Sem reconhecimento contínuo neste navegador. Use Chrome ou Edge.");
           return;
         }
-        if (recognition) {
-          try { recognition.onend = null; recognition.stop(); } catch (e) {}
-          recognition = null;
-        }
+        stopRecognition(false);
         recognition = new SR();
         recognition.lang = "pt-BR";
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
-        let buffer = "";
-        let silenceTimer = null;
-
         recognition.onstart = () => {
-          if (!paused && active && !agentSpeaking) setUI("live");
+          if (active && !userPaused && !agentSpeaking) setUI("live");
         };
         recognition.onerror = (event) => {
           if (event.error === "not-allowed") {
-            setUI("err", "Permissão de microfone negada. Autorize e recarregue.");
+            setUI("err", "Permissão de microfone negada.");
+            active = false;
             return;
           }
           if (event.error === "no-speech" || event.error === "aborted") return;
           err.textContent = "Aviso: " + event.error;
         };
         recognition.onresult = (event) => {
-          if (agentSpeaking || paused) return;
+          if (agentSpeaking || userPaused || !active) return;
           let interim = "";
           let finalChunk = "";
           for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -176,64 +194,70 @@
               }
             }, speakingPauseMs);
           }
-          Streamlit.setFrameHeight(document.body.scrollHeight);
         };
         recognition.onend = () => {
-          if (!paused && active && !agentSpeaking) {
+          if (!userPaused && active && !agentSpeaking) {
             restartTimer = setTimeout(() => {
-              try { recognition.start(); } catch (e) {}
-            }, 250);
+              try { if (recognition) recognition.start(); else startRecognition(); } catch (e) {}
+            }, 280);
           }
         };
         try {
           recognition.start();
-          setUI(agentSpeaking ? "speak" : "live");
+          setUI("live");
         } catch (e) {
           setUI("err", "Não consegui iniciar o microfone.");
         }
       }
 
       btn.onclick = () => {
-        paused = !paused;
-        if (paused) {
-          if (recognition) {
-            try { recognition.onend = null; recognition.stop(); } catch (e) {}
-          }
+        if (!active) return;
+        userPaused = !userPaused;
+        if (userPaused) {
+          stopRecognition(false);
           setUI("paused");
         } else {
           lastSent = "";
+          agentSpeaking = false;
           startRecognition();
         }
       };
 
-      function onRender(event) {
-        const data = (event.data && event.data.args) || {};
-        active = data.active !== false;
-        agentSpeaking = data.paused === true || data.agent_speaking === true;
+      function applyState(nextActive, nextSpeaking) {
+        active = !!nextActive;
+        agentSpeaking = !!nextSpeaking || !active;
         if (!active) {
-          paused = true;
-          setUI("paused", "Escuta desligada.");
+          userPaused = false;
+          stopRecognition(true);
+          setUI("off");
           return;
         }
         if (agentSpeaking) {
-          if (recognition) {
-            try { recognition.onend = null; recognition.stop(); } catch (e) {}
-          }
+          stopRecognition(false);
           setUI("speak");
           return;
         }
-        if (!recognition || paused) {
-          paused = false;
-          startRecognition();
-        } else {
-          setUI("live");
+        if (userPaused) {
+          setUI("paused");
+          return;
         }
+        startRecognition();
       }
 
-      Streamlit.events.addEventListener("streamlit:render", onRender);
-      window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
-      Streamlit.setFrameHeight(120);
-      startRecognition();
+      function onMessage(event) {
+        const data = event.data;
+        if (!data || data.type !== "streamlit:render") return;
+        const args = data.args || {};
+        const nextActive = args.active !== false && args.active !== 0 && args.active !== "false";
+        const nextSpeaking = args.paused === true || args.agent_speaking === true;
+        applyState(nextActive, nextSpeaking);
+      }
+
+      window.addEventListener("message", onMessage);
+      Streamlit.setComponentReady();
+      Streamlit.setFrameHeight(FIXED_HEIGHT);
+      setUI("off");
+      startedOnce = true;
     </script>
   </body>
 </html>

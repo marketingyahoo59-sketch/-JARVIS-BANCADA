@@ -352,6 +352,8 @@ def ensure_session() -> None:
         "last_manual_audio_hash": "",
         "nav": "bancada",
         "greeted_once": False,
+        "tts_autoplay": False,
+        "_pending_voice": None,
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -447,14 +449,17 @@ def top_menu() -> str:
 
 
 def play_agent_voice(text: str) -> None:
+    """Gera TTS e agenda autoplay no slot fixo de áudio (não monta st.audio aqui)."""
     if not st.session_state.voice_out or not (text or "").strip():
+        st.session_state.agent_speaking = False
+        st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
         return
     st.session_state.voice_status = "speaking"
     st.session_state.agent_speaking = True
     try:
         audio = speak_text(text)
         st.session_state.last_tts_bytes = audio
-        st.audio(audio, format="audio/mp3", autoplay=True)
+        st.session_state.tts_autoplay = True
     except Exception as exc:  # noqa: BLE001
         st.warning(f"Voz indisponível: {exc}")
     finally:
@@ -597,7 +602,13 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
             st.rerun()
     with cols[1]:
         if mode != "electronics" and st.button("Ativar especialista", use_container_width=True):
-            submit_user_turn(ag, case, "Quero ativar o modo especialista para consertar um equipamento")
+            st.session_state.voice_status = "processing"
+            st.session_state.agent_speaking = True
+            submit_user_turn(
+                ag,
+                case,
+                "Quero ativar o modo especialista para consertar um equipamento",
+            )
     with cols[2]:
         if st.button("Casos salvos", use_container_width=True):
             st.session_state.nav = "casos"
@@ -628,10 +639,7 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                 break
 
         # Voz contínua
-        heard = consume_continuous_voice(key=f"listen_chat_{case['case_id']}")
-        if heard:
-            st.success(f"Ouvi: “{heard}”")
-            submit_user_turn(ag, case, heard)
+        # Escuta global montada em main() — evita segundo iframe (crash removeChild).
 
         # Composer: foto + texto na mesma conversa
         with st.container():
@@ -757,8 +765,7 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
             st.caption("Nenhuma medição ainda — mande valores no chat.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-        if st.session_state.last_tts_bytes:
-            st.audio(st.session_state.last_tts_bytes, format="audio/mp3")
+        render_audio_slot()
 
         if st.session_state.last_image_bytes:
             st.markdown('<div class="j-panel"><h3>Visão</h3>', unsafe_allow_html=True)
@@ -782,30 +789,20 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
         st.caption(f"🛡️ {safety_brief(case.get('phase') if mode == 'electronics' else 'intake')}")
 
 
-def consume_continuous_voice(key: str) -> str | None:
-    if not st.session_state.listen_on:
-        return None
+def mount_listen_slot() -> str | None:
+    """Iframe SEMPRE montado (chave fixa). Desligar só pausa — não desmonta."""
     busy = (
-        st.session_state.agent_speaking
+        bool(st.session_state.agent_speaking)
         or st.session_state.get("voice_status") == "processing"
     )
-    # Enquanto processa, mantém o iframe montado mas pausado (evita removeChild).
-    if busy:
-        continuous_listen(
-            active=True,
-            paused=True,
-            agent_speaking=True,
-            key=key,
-        )
-        return None
-    st.session_state.voice_status = "listening"
+    active = bool(st.session_state.listen_on)
     transcript = continuous_listen(
-        active=True,
-        paused=False,
-        agent_speaking=False,
-        key=key,
+        active=active,
+        paused=(not active) or busy,
+        agent_speaking=(not active) or busy,
+        key="jarvis_listen_stable",
     )
-    if not transcript:
+    if not active or busy or not transcript:
         return None
     digest = _voice_hash(transcript)
     if digest == st.session_state.last_voice_hash:
@@ -814,6 +811,25 @@ def consume_continuous_voice(key: str) -> str | None:
     st.session_state.voice_status = "processing"
     st.session_state.agent_speaking = True
     return transcript
+
+
+def render_audio_slot() -> None:
+    """Player sempre presente no DOM — evita removeChild ao criar/destruir st.audio."""
+    audio = st.session_state.get("last_tts_bytes")
+    autoplay = bool(st.session_state.pop("tts_autoplay", False))
+    if audio:
+        try:
+            st.audio(audio, format="audio/mp3", autoplay=autoplay)
+        except TypeError:
+            st.audio(audio, format="audio/mp3")
+    else:
+        st.caption("Canal de áudio pronto.")
+
+
+def consume_continuous_voice(key: str | None = None) -> str | None:
+    # Compat: a escuta global já foi montada em main(); só consome pendência.
+    pending = st.session_state.pop("_pending_voice", None)
+    return pending
 
 
 def render_status_chip() -> None:
@@ -1101,7 +1117,7 @@ def intake_form(ag: DiagnosticAgent) -> None:
         st.warning("Ative **Segurança OK** antes de iniciar.")
 
     st.markdown('<div class="j-panel"><h3>Canal de voz</h3>', unsafe_allow_html=True)
-    heard = consume_continuous_voice(key="listen_intake")
+    heard = None  # microfone global em main()
     if heard and st.session_state.safety_ack:
         st.success(f"Ouvi: “{heard}”")
         with st.spinner("Abrindo enlace do caso…"):
@@ -1191,10 +1207,7 @@ def case_view(ag: DiagnosticAgent) -> None:
 
     left, right = st.columns([1.35, 1], gap="large")
     with left:
-        if st.session_state.last_tts_bytes:
-            st.markdown('<div class="j-panel"><h3>Canal de áudio</h3>', unsafe_allow_html=True)
-            st.audio(st.session_state.last_tts_bytes, format="audio/mp3")
-            st.markdown("</div>", unsafe_allow_html=True)
+        render_audio_slot()
 
         if case.get("pending_confirm"):
             st.warning("Confirme a medição: diga **confirmo** ou **não** se errou.")
@@ -1217,10 +1230,7 @@ def case_view(ag: DiagnosticAgent) -> None:
                 break
 
         st.markdown('<div class="j-panel"><h3>Fale com o JARVIS</h3>', unsafe_allow_html=True)
-        heard = consume_continuous_voice(key=f"listen_case_{case['case_id']}")
-        if heard:
-            st.success(f"Ouvi: “{heard}”")
-            submit_user_turn(ag, case, heard)
+        # Escuta global montada em main() — evita segundo iframe.
         st.markdown("</div>", unsafe_allow_html=True)
 
         with st.expander("Foto, esquema/PDF, áudio ou texto"):
@@ -1396,6 +1406,12 @@ def main() -> None:
     ag = get_agent()
     nav = top_menu()
 
+    # Microfone global: mesma posição no DOM em todo rerun (anti-removeChild).
+    if nav in {"bancada", "casos"} or True:
+        heard = mount_listen_slot()
+        if heard:
+            st.session_state._pending_voice = heard
+
     if nav == "seguranca":
         page_seguranca()
     elif nav == "falhas":
@@ -1407,6 +1423,13 @@ def main() -> None:
     elif nav == "config":
         page_config()
     else:
+        # Se a voz capturou frase, processa no chat aberto
+        pending = st.session_state.pop("_pending_voice", None)
+        if pending:
+            case = ensure_open_chat(ag)
+            st.success(f"Ouvi: “{pending}”")
+            submit_user_turn(ag, case, pending)
+            return
         open_chat_view(ag)
 
 
