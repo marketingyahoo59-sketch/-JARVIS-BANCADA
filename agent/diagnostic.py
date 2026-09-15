@@ -7,11 +7,77 @@ from typing import Any
 
 from .docs import docs_context_from_case, extract_text_from_bytes, save_case_doc
 from .failures import add_resolved_failure, similar_as_context
+from .learning_db import (
+    build_diagnostic_map,
+    learned_as_context,
+    map_as_context,
+    remember_resolution,
+)
 from .llm import call_llm, provider_status
 from .memory import CaseMemory
 from .profile import address_user
 from .research import research_for_case
 from .safety import safety_brief
+
+
+def _brain_context(case: dict[str, Any], user_text: str = "", *, force_research: bool = False) -> str:
+    """Pesquisa web + memória SQLite + mapa + banco JSON + docs."""
+    board = str(case.get("board_model") or "")
+    symptom = str(case.get("symptom") or "")
+    parts: list[str] = []
+
+    research = ""
+    if force_research or board or case.get("chat_mode") == "electronics":
+        research = research_for_case(case, user_text)
+        if research:
+            case["last_research"] = research[:4000]
+            parts.append(research)
+
+    learned = learned_as_context(board, symptom)
+    if learned:
+        case["learned_hint"] = learned
+        parts.append(learned)
+
+    bank = similar_as_context(board, symptom)
+    if bank:
+        parts.append(bank)
+
+    # Mantém / atualiza mapa de diagnóstico
+    if case.get("chat_mode") == "electronics" and (board or symptom):
+        hint = ""
+        if research:
+            # primeira linha útil após o header
+            for line in research.splitlines():
+                if line.startswith("- "):
+                    hint = line[2:220]
+                    break
+        if not case.get("diagnostic_map") or case["diagnostic_map"].get("device") != (board or "aparelho"):
+            case["diagnostic_map"] = build_diagnostic_map(board, symptom, hint)
+        else:
+            case["diagnostic_map"]["research_hint"] = hint or case["diagnostic_map"].get("research_hint", "")
+            case["diagnostic_map"]["symptom"] = symptom or case["diagnostic_map"].get("symptom")
+        parts.append(map_as_context(case.get("diagnostic_map")))
+
+    docs = docs_context_from_case(case)
+    if docs:
+        parts.append(docs)
+    return "\n\n".join(parts)
+
+
+def find_learned_brief(case: dict[str, Any]) -> str:
+    """Uma frase curta da memória SQLite para o anúncio de liderança."""
+    from .learning_db import find_learned
+
+    sims = find_learned(
+        str(case.get("board_model") or ""),
+        str(case.get("symptom") or ""),
+        limit=1,
+    )
+    if not sims:
+        return ""
+    it = sims[0]
+    part = it.get("replaced_part") or "a peça indicada"
+    return f"funcionou trocar **{part}**"
 
 
 ELECTRONICS_RE = re.compile(
@@ -80,25 +146,25 @@ class DiagnosticAgent:
         case = self.memory.create(board_model=board_model.strip(), symptom=symptom.strip())
         case["status"] = "diagnosing"
         case["phase"] = "intake"
+        case["chat_mode"] = "electronics"
+        extra = _brain_context(case, force_research=True)
         self.memory.save(case)
-
-        research = research_for_case(case)
-        bank = similar_as_context(board_model, symptom)
-        extra = "\n\n".join(x for x in [research, bank] if x)
         safety = safety_brief("intake")
 
         result = call_llm(
             case,
             user_text=(
-                f"Início do caso. Modelo da placa: {board_model}. "
-                f"Sintoma: {symptom}. Peça a foto da placa e prepare o primeiro passo. "
-                f"Inclua um aviso breve de segurança: {safety} "
-                "Se houver falhas comuns do modelo (pesquisa/banco), mencione em 1 frase."
+                f"Início do caso no Modo Mestre Técnico. Modelo: {board_model}. "
+                f"Sintoma: {symptom}. Você já tem pesquisa/memória no contexto. "
+                "Liderança: diga o que pesquisou, o defeito mais comum e proponha o Passo 1 "
+                "(foto da placa) + a 1ª medição se já souber o ponto. "
+                f"Aviso breve de segurança: {safety}"
             ),
             research_notes=extra or None,
         )
         out = self._apply_result(case, result, user_visible=True)
         out["safety_brief"] = safety
+        out["diagnostic_map"] = case.get("diagnostic_map")
         return out
 
     def load_case(self, case_id: str) -> dict[str, Any] | None:
@@ -153,25 +219,43 @@ class DiagnosticAgent:
             if isinstance(n, dict) and n.get("failed_node"):
                 failed_node = str(n["failed_node"])
                 break
+        board = str(case.get("board_model") or "")
+        symptom = str(case.get("symptom") or "")
+        measurements = list(case.get("measurements") or [])
         entry = add_resolved_failure(
-            board_model=str(case.get("board_model") or ""),
-            symptom=str(case.get("symptom") or ""),
+            board_model=board,
+            symptom=symptom,
             failed_node=failed_node or "nó não informado",
             replaced_part=replaced_part,
             notes=notes,
-            measurements=list(case.get("measurements") or []),
+            measurements=measurements,
+        )
+        learned = remember_resolution(
+            board_model=board,
+            symptom=symptom,
+            failed_node=failed_node or "",
+            replaced_part=replaced_part,
+            notes=notes,
+            measurements=measurements,
         )
         self.memory.add_message(
             case,
             "assistant",
             (
                 f"Caso marcado como resolvido. Peça trocada: **{replaced_part}**. "
-                "Salvei no banco de falhas para ajudar próximos consertos parecidos."
+                "Salvei no banco de falhas e na memória de aprendizado (SQLite) — "
+                "na próxima vez que aparecer um aparelho parecido, eu já sugiro o que funcionou."
             ),
-            meta={"phase": "done", "mode": "diagnose", "verdict": "ok", "bank_id": entry["id"]},
+            meta={
+                "phase": "done",
+                "mode": "diagnose",
+                "verdict": "ok",
+                "bank_id": entry["id"],
+                "learned_id": learned["id"],
+            },
         )
         self.memory.save(case)
-        return {"case": case, "bank_entry": entry}
+        return {"case": case, "bank_entry": entry, "learned_entry": learned}
 
 
     def open_session(self, operator_name: str | None = None) -> dict[str, Any]:
@@ -186,14 +270,14 @@ class DiagnosticAgent:
         hour = __import__("datetime").datetime.now().hour
         greet = "Bom dia" if hour < 12 else ("Boa tarde" if hour < 18 else "Boa noite")
         msg = (
-            f"{greet}, {who}. Sistemas online. "
-            "Pode falar comigo à vontade — tirar dúvida, bater um papo ou pedir ajuda. "
-            "Quando quiser consertar algo (placa, celular, monitor, fonte…), é só dizer: "
-            "eu entro no Modo Especialista e guio ponta a ponta no multímetro."
+            f"{greet}, {who}. Sistemas online — sou o seu Cérebro de Engenharia Eletrônica. "
+            "Pode papear à vontade (piada inclusa). "
+            "Quando for consertar algo, eu entro no **Modo Mestre Técnico**: pesquiso manuais, "
+            "monto o mapa de diagnóstico e lidero ponto a ponto."
         )
         spoken = (
             f"{greet}, {who}. Estou online. Pode falar comigo. "
-            "Quando for hora de consertar, diga o aparelho e o defeito que eu assumo o diagnóstico."
+            "Para conserto, diga o aparelho e o defeito — eu pesquiso e assumo o diagnóstico."
         )
         self.memory.add_message(
             case,
@@ -227,11 +311,10 @@ class DiagnosticAgent:
         *,
         announce: bool = True,
     ) -> dict[str, Any]:
-        """Liga Modo Especialista a partir de um chat aberto."""
+        """Liga Modo Mestre Técnico a partir de um chat aberto."""
         case["chat_mode"] = "electronics"
         case["status"] = "diagnosing"
         case["phase"] = "intake"
-        # tenta extrair placa/sintoma da fala
         try:
             from .voice import extract_intake_from_speech
 
@@ -240,22 +323,40 @@ class DiagnosticAgent:
                 case["board_model"] = intake["board_model"]
             if intake.get("symptom") and not case.get("symptom"):
                 case["symptom"] = intake["symptom"]
-            # aliases possíveis do extrator
-            if intake.get("board_model") and not case.get("board_model"):
-                case["board_model"] = intake["board_model"]
-            if intake.get("symptom") and not case.get("symptom"):
-                case["symptom"] = intake["symptom"]
         except Exception:
             pass
         if not case.get("symptom") and len(user_text.strip()) > 8:
             case["symptom"] = user_text.strip()[:200]
+
+        # Pesquisa ativa + mapa + memória assim que entra no modo
+        _brain_context(case, user_text, force_research=bool(case.get("board_model")))
         self.memory.save(case)
+
         if announce:
             board = case.get("board_model") or "o equipamento"
-            note = (
-                f"Modo Especialista em Eletrônica ativado para {board}. "
-                "Vamos no método: foto da placa (se puder) e uma medição por vez. "
-            )
+            learned = find_learned_brief(case)
+            research_hint = ""
+            dm = case.get("diagnostic_map") or {}
+            if dm.get("research_hint"):
+                research_hint = str(dm["research_hint"])[:160]
+            if learned:
+                note = (
+                    f"**Modo Mestre Técnico** ligado. Em aparelhos como {board}, "
+                    f"já aprendemos que a solução {learned}. "
+                    "Vamos confirmar no mapa: foto da placa e a 1ª medição. "
+                )
+            elif research_hint:
+                note = (
+                    f"**Modo Mestre Técnico**. Pesquisei sobre {board}. "
+                    f"Pista forte: {research_hint}. Vamos testar? "
+                    "Me mande a foto da placa e seguimos o Passo 1 do mapa. "
+                )
+            else:
+                note = (
+                    f"**Modo Mestre Técnico** ativado para {board}. "
+                    "Vou liderar: Passo 1 análise visual (foto da placa), "
+                    "depois medições básicas, depois componentes. "
+                )
             case.setdefault("_electronics_announce", note)
         return case
 
@@ -374,26 +475,32 @@ class DiagnosticAgent:
             )
 
         lowered = user_text.lower()
-        should_research = any(
-            k in lowered
-            for k in (
-                "?",
-                "o que é",
-                "por que",
-                "porque",
-                "esquema",
-                "datasheet",
-                "pesquisa",
-                "não sei",
-                "nao sei",
-                "procura",
-                "busca",
+        needs_from_llm = bool(case.get("_needs_research"))
+        case["_needs_research"] = False
+        should_research = (
+            case.get("chat_mode") == "electronics"
+            or needs_from_llm
+            or bool(case.get("board_model"))
+            or any(
+                k in lowered
+                for k in (
+                    "?",
+                    "o que é",
+                    "por que",
+                    "porque",
+                    "esquema",
+                    "datasheet",
+                    "pesquisa",
+                    "manual",
+                    "não sei",
+                    "nao sei",
+                    "procura",
+                    "busca",
+                    "defeito comum",
+                )
             )
-        ) or bool(case.get("board_model"))
-        research = research_for_case(case, user_text) if should_research else ""
-        bank = similar_as_context(str(case.get("board_model") or ""), str(case.get("symptom") or ""))
-        docs = docs_context_from_case(case)
-        extra = "\n\n".join(x for x in [research, bank, docs] if x)
+        )
+        extra = _brain_context(case, user_text, force_research=should_research)
 
         result = call_llm(
             case,
@@ -402,6 +509,20 @@ class DiagnosticAgent:
             image_mime=image_mime,
             research_notes=extra or None,
         )
+        if result.get("needs_research"):
+            case["_needs_research"] = True
+            # reforço imediato se o modelo pediu e ainda não pesquisamos de verdade
+            if not extra or "(pesquisa indisponível" in extra:
+                extra2 = _brain_context(case, user_text, force_research=True)
+                if extra2 and extra2 != extra:
+                    result = call_llm(
+                        case,
+                        prompt
+                        + "\n\n[Pesquisa reforçada acabou de chegar — use-a para liderar o próximo teste.]",
+                        image_bytes=image_bytes,
+                        image_mime=image_mime,
+                        research_notes=extra2,
+                    )
 
         if image_bytes and image_name:
             probe = result.get("probe") or {}
@@ -547,11 +668,33 @@ class DiagnosticAgent:
         # LLM pode pedir troca para electronics via next_action
         if result.get("next_action") in {"ask_photo", "ask_measurement", "ask_replace"}:
             case["chat_mode"] = "electronics"
-        # Prefixo de anúncio do modo especialista (uma vez)
+        # Prefixo de anúncio do modo Mestre Técnico (uma vez)
         announce = case.pop("_electronics_announce", None)
-        if announce and not message.startswith("Modo Especialista"):
+        if announce and not (
+            message.startswith("Modo Especialista")
+            or message.startswith("**Modo Mestre")
+            or "Modo Mestre Técnico" in message[:80]
+        ):
             message = announce + message
-            spoken = (announce.split(".")[0] + ". " + spoken).strip()
+            spoken = (announce.replace("**", "").split(".")[0] + ". " + spoken).strip()
+
+        # Atualiza passo do mapa de diagnóstico
+        step = result.get("diagnostic_step")
+        if step and case.get("diagnostic_map"):
+            try:
+                case["diagnostic_map"]["current_step"] = max(1, min(3, int(step)))
+            except (TypeError, ValueError):
+                pass
+        if image_bytes and case.get("diagnostic_map"):
+            # foto recebida → pode avançar para medições se ainda no passo 1
+            if int(case["diagnostic_map"].get("current_step") or 1) == 1:
+                case["diagnostic_map"]["current_step"] = 2
+        if verdict in ("ok", "fail") and case.get("diagnostic_map"):
+            cur = int(case["diagnostic_map"].get("current_step") or 1)
+            if cur == 2 and verdict == "ok":
+                case["diagnostic_map"]["current_step"] = 3
+            elif cur == 2 and verdict == "fail":
+                case["diagnostic_map"]["current_step"] = 3
 
         if verdict in ("ok", "fail") and probe:
             last_user = None
@@ -621,4 +764,5 @@ class DiagnosticAgent:
             "verdict": verdict,
             "solution": solution,
             "next_action": result.get("next_action"),
+            "diagnostic_map": case.get("diagnostic_map"),
         }

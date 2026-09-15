@@ -6,7 +6,11 @@ data/cases/*.json
 data/uploads/*
 data/sensors/*
 data/profile.json
+data/brain/*.db
+data/failures/bank.json
 !data/cases/.gitkeep
 !data/uploads/.gitkeep
 !data/sensors/.gitkeep
+!data/brain/.gitkeep
+!data/failures/.gitkeep
 .streamlit/secrets.toml

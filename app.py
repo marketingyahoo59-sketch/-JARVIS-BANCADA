@@ -704,7 +704,7 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                 play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
                 st.rerun()
 
-        with st.expander("Marcar resolvido (banco de falhas)"):
+        with st.expander("Marcar resolvido (aprendizado + banco de falhas)"):
             part = st.text_input("Peça que resolveu", placeholder="Ex: C905")
             notes = st.text_input("Nota (opcional)")
             if st.button("Salvar no arquivo de falhas", type="primary"):
@@ -712,11 +712,27 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                     st.error("Informe a peça.")
                 else:
                     ag.resolve_case(case, part.strip(), notes.strip())
-                    st.success("Salvo.")
+                    st.success("Salvo no SQLite e no banco JSON.")
                     play_agent_voice(f"Caso resolvido. Salvei a troca de {part.strip()}.")
                     st.rerun()
 
     with right:
+        dm = case.get("diagnostic_map")
+        if dm and mode == "electronics":
+            st.markdown('<div class="j-panel"><h3>Mapa de diagnóstico</h3>', unsafe_allow_html=True)
+            cur = int(dm.get("current_step") or 1)
+            for step in dm.get("steps") or []:
+                sid = int(step.get("id") or 0)
+                mark = "▶" if sid == cur else ("✓" if sid < cur else "○")
+                st.markdown(
+                    f"**{mark} Passo {sid} — {step.get('name')}**  \n"
+                    f"{step.get('goal')}  \n"
+                    f"_{step.get('ask')}_"
+                )
+            if dm.get("research_hint"):
+                st.caption(f"Pista web: {dm['research_hint'][:180]}")
+            st.markdown("</div>", unsafe_allow_html=True)
+
         st.markdown('<div class="j-panel"><h3>Memória</h3>', unsafe_allow_html=True)
         measures = case.get("measurements", [])
         if measures:
@@ -1270,7 +1286,7 @@ def case_view(ag: DiagnosticAgent) -> None:
                         image_mime=image_mime,
                     )
 
-        with st.expander("Marcar resolvido (banco de falhas)"):
+        with st.expander("Marcar resolvido (aprendizado + banco de falhas)"):
             part = st.text_input("Peça que resolveu", placeholder="Ex: C905")
             notes = st.text_input("Nota (opcional)")
             if st.button("Salvar no arquivo de falhas", type="primary"):
@@ -1278,11 +1294,27 @@ def case_view(ag: DiagnosticAgent) -> None:
                     st.error("Informe a peça.")
                 else:
                     ag.resolve_case(case, part.strip(), notes.strip())
-                    st.success("Salvo.")
+                    st.success("Salvo no SQLite e no banco JSON.")
                     play_agent_voice(f"Caso resolvido. Salvei a troca de {part.strip()}.")
                     st.rerun()
 
     with right:
+        dm = case.get("diagnostic_map")
+        if dm:
+            st.markdown('<div class="j-panel"><h3>Mapa de diagnóstico</h3>', unsafe_allow_html=True)
+            cur = int(dm.get("current_step") or 1)
+            for step in dm.get("steps") or []:
+                sid = int(step.get("id") or 0)
+                mark = "▶" if sid == cur else ("✓" if sid < cur else "○")
+                st.markdown(
+                    f"**{mark} Passo {sid} — {step.get('name')}**  \n"
+                    f"{step.get('goal')}  \n"
+                    f"_{step.get('ask')}_"
+                )
+            if dm.get("research_hint"):
+                st.caption(f"Pista web: {dm['research_hint'][:180]}")
+            st.markdown("</div>", unsafe_allow_html=True)
+
         st.markdown('<div class="j-panel"><h3>Memória do caso</h3>', unsafe_allow_html=True)
         measures = case.get("measurements", [])
         if measures:
