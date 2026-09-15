@@ -31,7 +31,7 @@ def host_metrics() -> dict[str, Any]:
         "platform": platform.platform(),
         "python": platform.python_version(),
         "source": "host",
-        "label": "SERVIDOR RENDER" if os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID") else "HOST LOCAL",
+        "label": "CLOUD RUN" if os.getenv("K_SERVICE") else "HOST LOCAL",
     }
     try:
         import psutil

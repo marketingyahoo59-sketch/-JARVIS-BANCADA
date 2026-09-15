@@ -5,7 +5,7 @@ Com GCS_BUCKET definido:
   - no boot: baixa o bucket → JARVIS_DATA_DIR
   - a cada gravação: sobe o arquivo alterado
 
-Sem GCS_BUCKET (local / Railway volume): não faz nada.
+Sem GCS_BUCKET (só local): não faz nada.
 """
 
 from __future__ import annotations

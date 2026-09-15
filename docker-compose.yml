@@ -1,4 +1,4 @@
-# Opcional: VPS / PC local com disco permanente
+# Local / teste com disco persistente
 services:
   jarvis:
     build: .
@@ -10,6 +10,7 @@ services:
       JARVIS_TTS: edge
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       LLM_PROVIDER: openai
+      GCS_BUCKET: ${GCS_BUCKET:-}
     volumes:
       - jarvis_data:/data
     restart: unless-stopped

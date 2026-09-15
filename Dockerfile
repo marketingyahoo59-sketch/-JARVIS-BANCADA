@@ -1,10 +1,10 @@
-# JARVIS — deploy no Railway (rápido + memória permanente)
+# JARVIS — deploy no Google Cloud Run (+ GCS para memória)
 
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Padrão Cloud Run (disco tmp + sync GCS). No Railway sobrescreva JARVIS_DATA_DIR=/data
+# Padrão Cloud Run: disco tmp + sync GCS
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8080 \

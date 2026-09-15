@@ -1,11 +1,11 @@
-"""Raiz de dados persistente (Railway Volume / VPS / local)."""
+"""Raiz de dados persistente (local / Cloud Run (/tmp + GCS))."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-# No Railway: monte o volume em /data e defina JARVIS_DATA_DIR=/data
+# No Cloud Run: JARVIS_DATA_DIR=/tmp/jarvis-data + GCS_BUCKET=...
 _DEFAULT = Path(__file__).resolve().parent.parent / "data"
 DATA_ROOT = Path(os.getenv("JARVIS_DATA_DIR", str(_DEFAULT))).expanduser().resolve()
 

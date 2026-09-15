@@ -1,22 +1,20 @@
 # JARVIS de Bancada
 
-Cérebro de Engenharia Eletrônica (Streamlit): Jarvis livre + Modo Mestre Técnico — pesquisa, mapa de diagnóstico e aprendizado com seus consertos.
+Cérebro de Engenharia Eletrônica (Streamlit): Jarvis livre + Modo Mestre Técnico.
 
-**Online (Render Free — pode dormir):** https://jarvis-bancada.onrender.com/
-
-**Grátis no Google (paga se passar da cota):** [Cloud Run + bucket GCS](deploy/CLOUDRUN.md)  
-**Rápido + disco fixo:** [Railway Volume](deploy/RAILWAY.md)
+**Hospedagem: só Google Cloud Run + Cloud Storage.**  
+Guia: **[deploy/CLOUDRUN.md](deploy/CLOUDRUN.md)**
 
 ## O que faz
 
 1. **Personalidade livre** — conversa, piadas, parceiro de bancada.
 2. **Modo Mestre Técnico** — lidera o conserto quando detecta diagnóstico.
-3. **Pesquisa ativa** — manuais/esquemas/defeitos (só quando precisa; timeout 6s).
+3. **Pesquisa ativa** — manuais/esquemas/defeitos (timeout curto).
 4. **Mapa de diagnóstico** — visual → medições → componentes.
-5. **Memória SQLite** — `data/brain/learning.db` (Railway: volume `/data`).
-6. **Visão**, falhas JSON, PDF, segurança, TTS rápido (edge), PWA, HUD.
+5. **Memória** — SQLite + fotos no **bucket GCS** (`GCS_BUCKET`).
+6. **Visão**, falhas, PDF, segurança, TTS (edge), PWA, HUD.
 
-## Instalação
+## Local
 
 ```bash
 python3 -m venv .venv
@@ -24,39 +22,34 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # OPENAI_API_KEY=...
-# JARVIS_TTS=edge
-```
-
-## Executar
-
-```bash
 streamlit run app.py --server.port 3847 --server.address 0.0.0.0
 ```
 
-http://127.0.0.1:3847
+## Deploy Google
 
-## Deploy rápido (Railway)
+```bash
+export OPENAI_API_KEY=sk-...
+bash scripts/deploy-cloudrun.sh
+```
 
-Guia: **[deploy/RAILWAY.md](deploy/RAILWAY.md)**
+Ou Continuous Deploy pelo console (GitHub → Cloud Run), como você já está fazendo.
 
-1. Deploy do GitHub no Railway (Dockerfile).
-2. Vars: `OPENAI_API_KEY`, `JARVIS_DATA_DIR=/data`, `JARVIS_TTS=edge`, `OPENAI_MODEL=gpt-4o-mini`.
-3. **Volume** em `/data` (obrigatório para não perder aprendizado).
-4. Push em `main` atualiza; o volume permanece.
+Variáveis principais:
 
-## Por que o Render Free trava
-
-- Cold start ~30s (dorme).
-- Disco efêmero (perde DB/fotos).
-- Pouca RAM para voz/visão.
+| Nome | Valor |
+|---|---|
+| `OPENAI_API_KEY` | sua chave |
+| `GCS_BUCKET` | bucket da memória |
+| `JARVIS_DATA_DIR` | `/tmp/jarvis-data` |
+| `JARVIS_TTS` | `edge` |
+| `OPENAI_MODEL` | `gpt-4o-mini` |
 
 ## Estrutura
 
 ```
 app.py
-agent/            # diagnostic, llm, memory, learning_db, paths…
-data/             # local; produção = volume /data
-deploy/RAILWAY.md
+agent/               # diagnostic, llm, memory, gcs_sync…
+deploy/CLOUDRUN.md
+scripts/deploy-cloudrun.sh
 Dockerfile
-railway.toml
 ```

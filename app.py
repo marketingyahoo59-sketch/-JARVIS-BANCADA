@@ -931,14 +931,14 @@ def page_config() -> None:
         2) Terminal A: <code>python scripts/sensor_local.py</code> (deixe aberto)<br>
         3) Terminal B: <code>streamlit run app.py --server.port 3847</code><br>
         4) Abra <b>Sistemas</b> — CPU/RAM/temp vêm do seu PC.<br>
-        No site Render, CPU/RAM são do <b>servidor</b>, não da bancada.</p></div>
+        No site Cloud Run, CPU/RAM são do <b>servidor</b>, não da bancada.</p></div>
         """,
         unsafe_allow_html=True,
     )
     st.markdown(
         """
-        <div class="j-risk"><b>RISCOS</b> · Render Free pode dormir se o keep-alive falhar ·
-        GPT-5.5 consome créditos · chave API no Render — não partilhar ·
+        <div class="j-risk"><b>RISCOS</b> · Cloud Run com mín=0 pode ter cold start ·
+        OpenAI consome créditos · não compartilhe a API key ·
         temperatura no cloud ≠ PC da bancada · confirmação antes de SOLUÇÃO é obrigatória ·
         não mexa em alta tensão sem EPI.</div>
         """,
@@ -1020,11 +1020,11 @@ def page_sistemas(ag: DiagnosticAgent) -> None:
     c2.metric("Modelo", info.get("model") or "—")
     c3.metric("Modo", "DEMO" if info.get("mock") else "COMBATE")
     st.caption(
-        "Keep-alive: GitHub Action a cada 5 min → https://jarvis-bancada.onrender.com/"
+        "Deploy: Google Cloud Run + GCS — ver deploy/CLOUDRUN.md"
     )
     st.markdown(
         """
-        <div class="j-risk"><b>RISCOS OPERACIONAIS</b> · Free Render dorme sem ping ·
+        <div class="j-risk"><b>RISCOS OPERACIONAIS</b> · Free Cloud Run dorme sem ping ·
         cold start ~30–60s · API paga por uso · métricas do site ≠ PC da bancada ·
         confirme medição antes de SOLUÇÃO · EPI em alta tensão.</div>
         """,

@@ -10,4 +10,4 @@ Write-Host '  git commit -m "HUD JARVIS Sr. Igor + Sistemas + Config + keep-aliv
 Write-Host '  git push origin main'
 Write-Host ""
 Write-Host "Depois no Render: Manual Deploy -> Deploy latest commit"
-Write-Host "URL: https://jarvis-bancada.onrender.com/"
+Write-Host "URL: https://console.cloud.google.com/run"

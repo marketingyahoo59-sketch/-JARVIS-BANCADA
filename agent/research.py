@@ -51,7 +51,7 @@ def _search_batch(queries: list[str], max_results: int = 6) -> list[str]:
         return out
 
     try:
-        # Timeout curto — resposta rápida na bancada (Railway/VPS/local).
+        # Timeout curto — resposta rápida na bancada (Cloud Run/local).
         with ThreadPoolExecutor(max_workers=1) as pool:
             fut = pool.submit(_run)
             snippets = fut.result(timeout=6)
