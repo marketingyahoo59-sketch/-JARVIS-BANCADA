@@ -1,30 +1,35 @@
-# JARVIS sem dormir — Fly.io
+# Fly.io — JARVIS sem dormir
 
-O Render **Free** dorme ~15 min sem tráfego. No **Fly.io** o free allowance costuma manter a app acordada se configurares `min_machines_running = 1` (consome crédito grátis do mês).
+## No site (1×)
 
-## 1. Conta
+1. Conta: https://fly.io/app/sign-up  
+2. Cartão pode ser pedido (há crédito grátis).  
+3. Token: https://fly.io/user/personal_access_tokens → **Create token**  
+4. Cola o token no chat Cursor (`FlyV1 ...` ou `fo1_...`)
 
-1. Cria conta em https://fly.io
-2. Instala CLI: https://fly.io/docs/hands-on/install-flyctl/
-3. `fly auth login`
+## Deploy (eu faço com o teu token)
 
-## 2. Deploy (na pasta do projeto)
+Com `FLY_API_TOKEN` + `OPENAI_API_KEY`:
 
 ```bash
-fly launch --name jarvis-bancada --region gru --no-deploy
-fly secrets set OPENAI_API_KEY=sk-... LLM_PROVIDER=openai OPENAI_MODEL=gpt-5.5
+export FLY_API_TOKEN='...'
+export PATH="$HOME/.fly/bin:$PATH"
+fly apps create jarvis-bancada --org personal 2>/dev/null || true
+fly secrets set OPENAI_API_KEY="$OPENAI_API_KEY" LLM_PROVIDER=openai -a jarvis-bancada
+fly deploy -a jarvis-bancada
+```
+
+URL final: **https://jarvis-bancada.fly.dev**
+
+## Ou no teu PC (PowerShell)
+
+```powershell
+# instala: https://fly.io/docs/hands-on/install-flyctl/
+fly auth login
+cd pasta-do-jarvis
+fly launch --copy-config --name jarvis-bancada --region gru --yes
+fly secrets set OPENAI_API_KEY=sk-...
 fly deploy
 ```
 
-O ficheiro `fly.toml` já está neste repo.
-
-## 3. Manter acordado
-
-Em `fly.toml`:
-
-```toml
-[http_service]
-  min_machines_running = 1
-```
-
-Sem cartão o crédito grátis acaba; depois ou pagas pouco ou volta a dormir.
+`min_machines_running = 1` + `auto_stop_machines = "off"` → **não dorme** (gasta o crédito free do mês).
