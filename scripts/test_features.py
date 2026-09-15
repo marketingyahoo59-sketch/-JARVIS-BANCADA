@@ -47,15 +47,68 @@ def test_vision() -> None:
 
 def test_status_helpers() -> None:
     try:
-        # Status chip é UI; validamos os estados usados pelo app
         labels = {"idle", "listening", "processing", "speaking"}
         assert labels == {"idle", "listening", "processing", "speaking"}
         from agent.listen_component import continuous_listen
 
-        assert callable(continuous_listen)
-        ok("2 escuta: status + continuous_listen")
+        assert continuous_listen(active=True) is None
+        ok("2 escuta: no-op (anti-removeChild)")
     except Exception as exc:  # noqa: BLE001
         fail("2 escuta", exc)
+
+
+def test_research_guards() -> None:
+    try:
+        from agent.research import is_researchable_device, research_for_case, _is_junk
+
+        assert not is_researchable_device("equipamento")
+        assert not is_researchable_device("o equipamento")
+        assert is_researchable_device("Samsung UN32J4300")
+        assert is_researchable_device("placa Fonte Philco PBF")
+        assert _is_junk(
+            "Código de Erro do Microsoft Teams 0xcaa80000",
+            "login Windows",
+            "https://techcommunity.microsoft.com/t5/teams",
+        )
+        out = research_for_case({"board_model": "", "symptom": "não liga"}, "consertar")
+        assert "adiada" in out.lower() or "modelo" in out.lower()
+        ok("2b pesquisa: filtro + sem modelo")
+    except Exception as exc:  # noqa: BLE001
+        fail("2b pesquisa", exc)
+
+
+def test_hotwords() -> None:
+    try:
+        from agent.diagnostic import DiagnosticAgent, NOTE_RE, NEXT_STEP_RE
+        from agent.memory import CaseMemory
+
+        assert NOTE_RE.match("anota: fusível OK")
+        assert NEXT_STEP_RE.search("próxima etapa")
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = CaseMemory(Path(tmp))
+            ag = DiagnosticAgent(mem)
+            case = mem.create("", "", chat_mode="open")
+            out = ag.handle_user(case, "anota: LED standby apagado")
+            assert "Anotado" in (out.get("message") or "")
+            assert "LED standby" in str(case.get("notes") or "")
+            case2 = mem.create("Fonte XYZ-99", "não liga", chat_mode="electronics")
+            case2["chat_mode"] = "electronics"
+            case2["diagnostic_map"] = {
+                "device": "Fonte XYZ-99",
+                "current_step": 1,
+                "steps": [
+                    {"id": 1, "name": "Análise visual", "goal": "Ver", "ask": "Foto"},
+                    {"id": 2, "name": "Medições", "goal": "Medir", "ask": "5VSB"},
+                    {"id": 3, "name": "Componentes", "goal": "Isolar", "ask": "CI"},
+                ],
+            }
+            mem.save(case2)
+            out2 = ag.handle_user(case2, "próxima etapa")
+            assert case2["diagnostic_map"]["current_step"] == 2
+            assert "Medições" in (out2.get("message") or "")
+        ok("2c hotwords anota/próxima")
+    except Exception as exc:  # noqa: BLE001
+        fail("2c hotwords", exc)
 
 
 def test_failures() -> None:
@@ -253,6 +306,8 @@ if __name__ == "__main__":
     test_imports_app()
     test_vision()
     test_status_helpers()
+    test_research_guards()
+    test_hotwords()
     test_failures()
     test_docs()
     test_safety()

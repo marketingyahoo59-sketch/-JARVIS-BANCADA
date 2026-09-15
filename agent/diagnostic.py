@@ -16,8 +16,21 @@ from .learning_db import (
 from .llm import call_llm, provider_status
 from .memory import CaseMemory
 from .profile import address_user
-from .research import research_for_case
+from .research import is_researchable_device, research_for_case
 from .safety import safety_brief
+
+NOTE_RE = re.compile(
+    r"^\s*(?:anota|anote|anotar|nota)\s*[:\-–]\s*(.+)$",
+    re.I | re.S,
+)
+NEXT_STEP_RE = re.compile(
+    r"\b("
+    r"pr[oó]xim[ao]\s+(etapa|passo|teste)|"
+    r"avança|avancar|avançar|próximo|proximo\s+passo|"
+    r"passa\s+pro?\s+pr[oó]ximo|manda\s+o\s+pr[oó]ximo"
+    r")\b",
+    re.I,
+)
 
 
 def _brain_context(case: dict[str, Any], user_text: str = "", *, force_research: bool = False) -> str:
@@ -27,13 +40,19 @@ def _brain_context(case: dict[str, Any], user_text: str = "", *, force_research:
     parts: list[str] = []
 
     research = ""
-    # Só pesquisa web quando pedido (force_research). Cache local não bloqueia o chat.
-    if force_research:
+    # Só pesquisa web quando pedido E com modelo concreto (anti-lixo Teams/etc.).
+    if force_research and is_researchable_device(board):
         research = research_for_case(case, user_text)
         if research:
             case["last_research"] = research[:4000]
+    elif force_research and not is_researchable_device(board):
+        research = research_for_case(case, user_text)  # mensagem de adiamento
+        # Não grava “adiada” como last_research permanente útil
     elif case.get("last_research"):
         research = str(case.get("last_research") or "")
+        if "pesquisa web adiada" in research.lower() or "0xcaa" in research.lower():
+            research = ""
+            case["last_research"] = ""
     if research:
         parts.append(research)
 
@@ -50,10 +69,13 @@ def _brain_context(case: dict[str, Any], user_text: str = "", *, force_research:
     if case.get("chat_mode") == "electronics" and (board or symptom):
         hint = ""
         if research:
-            # primeira linha útil após o header
+            # primeira linha útil após o header (ignora lixo)
             for line in research.splitlines():
                 if line.startswith("- "):
-                    hint = line[2:220]
+                    cand = line[2:220]
+                    if re.search(r"0xcaa|teams|microsoft community|windows\s*login", cand, re.I):
+                        continue
+                    hint = cand
                     break
         if not case.get("diagnostic_map") or case["diagnostic_map"].get("device") != (board or "aparelho"):
             case["diagnostic_map"] = build_diagnostic_map(board, symptom, hint)
@@ -274,14 +296,14 @@ class DiagnosticAgent:
         hour = __import__("datetime").datetime.now().hour
         greet = "Bom dia" if hour < 12 else ("Boa tarde" if hour < 18 else "Boa noite")
         msg = (
-            f"{greet}, {who}. Sistemas online — sou o seu Cérebro de Engenharia Eletrônica. "
-            "Pode papear à vontade (piada inclusa). "
-            "Quando for consertar algo, eu entro no **Modo Mestre Técnico**: pesquiso manuais, "
-            "monto o mapa de diagnóstico e lidero ponto a ponto."
+            f"{greet}, {who}. Online e sem modo robô. "
+            "Pode papear — ou jogar o aparelho e o defeito que eu assumo a bancada: "
+            "manual, mapa e uma medição de cada vez. "
+            "Atalhos: **anota:** … e **próxima etapa**."
         )
         spoken = (
-            f"{greet}, {who}. Estou online. Pode falar comigo. "
-            "Para conserto, diga o aparelho e o defeito — eu pesquiso e assumo o diagnóstico."
+            f"{greet}, {who}. Estou online. Fala comigo. "
+            "Para conserto, modelo e sintoma — eu puxo o fio."
         )
         self.memory.add_message(
             case,
@@ -330,36 +352,60 @@ class DiagnosticAgent:
         except Exception:
             pass
         if not case.get("symptom") and len(user_text.strip()) > 8:
-            case["symptom"] = user_text.strip()[:200]
+            # Não grava frases de ativação genéricas como "sintoma"
+            low = user_text.strip().lower()
+            if not re.search(
+                r"modo\s+(mestre|especialista|t[eé]cnico)|ativar|consertar um equipamento",
+                low,
+            ):
+                case["symptom"] = user_text.strip()[:200]
 
-        # Pesquisa ativa + mapa + memória assim que entra no modo
-        _brain_context(case, user_text, force_research=bool(case.get("board_model")))
+        # Pesquisa só com modelo concreto — evita lixo (Teams etc.)
+        board_ok = is_researchable_device(str(case.get("board_model") or ""))
+        _brain_context(case, user_text, force_research=board_ok)
+        # Mapa mesmo sem pesquisa (sintoma genérico)
+        if case.get("chat_mode") == "electronics" and (
+            case.get("board_model") or case.get("symptom")
+        ):
+            if not case.get("diagnostic_map"):
+                case["diagnostic_map"] = build_diagnostic_map(
+                    str(case.get("board_model") or ""),
+                    str(case.get("symptom") or ""),
+                    "",
+                )
         self.memory.save(case)
 
         if announce:
-            board = case.get("board_model") or "o equipamento"
+            board = case.get("board_model") or ""
             learned = find_learned_brief(case)
             research_hint = ""
             dm = case.get("diagnostic_map") or {}
             if dm.get("research_hint"):
                 research_hint = str(dm["research_hint"])[:160]
-            if learned:
+                # Descarta pista lixo
+                if re.search(r"0xcaa|teams|microsoft community|windows", research_hint, re.I):
+                    research_hint = ""
+                    dm["research_hint"] = ""
+            if learned and board:
                 note = (
-                    f"**Modo Mestre Técnico** ligado. Em aparelhos como {board}, "
-                    f"já aprendemos que a solução {learned}. "
-                    "Vamos confirmar no mapa: foto da placa e a 1ª medição. "
+                    f"**Mestre Técnico.** Nesse tipo ({board}) já rolou solução: {learned}. "
+                    "Foto da placa — confirmo se é o mesmo filme."
                 )
-            elif research_hint:
+            elif research_hint and board_ok:
                 note = (
-                    f"**Modo Mestre Técnico**. Pesquisei sobre {board}. "
-                    f"Pista forte: {research_hint}. Vamos testar? "
-                    "Me mande a foto da placa e seguimos o Passo 1 do mapa. "
+                    f"**Mestre Técnico** em {board}. Pista útil: {research_hint}. "
+                    "Manda a foto da área da fonte — Passo 1."
+                )
+            elif board_ok:
+                note = (
+                    f"**Mestre Técnico.** Alvo: {board}. "
+                    "Foto da placa (fonte/entrada) e eu marco o primeiro ponto."
                 )
             else:
                 note = (
-                    f"**Modo Mestre Técnico** ativado para {board}. "
-                    "Vou liderar: Passo 1 análise visual (foto da placa), "
-                    "depois medições básicas, depois componentes. "
+                    "**Mestre Técnico** no ar. Me diga a **marca/modelo** da placa "
+                    "(não só “equipamento”) e o sintoma — ou manda a foto. "
+                    "Sem modelo concreto eu não pesquiso na web (evita lixo)."
                 )
             case.setdefault("_electronics_announce", note)
         return case
@@ -400,6 +446,95 @@ class DiagnosticAgent:
         if image_name:
             meta["image"] = image_name
         self.memory.add_message(case, "user", user_text, meta=meta or None)
+
+        # Hotword: anota: ...
+        note_m = NOTE_RE.match(user_text or "")
+        if note_m:
+            note = note_m.group(1).strip()
+            prev = str(case.get("notes") or "")
+            case["notes"] = (prev + "\n" + note).strip() if prev else note
+            case.setdefault("operator_notes", [])
+            if isinstance(case["operator_notes"], list):
+                case["operator_notes"].append(
+                    {"text": note, "at": __import__("datetime").datetime.utcnow().isoformat() + "Z"}
+                )
+            self.memory.save(case)
+            msg = f"Anotado: _{note}_. Continuo daqui."
+            spoken = f"Anotado. {note[:120]}"
+            self.memory.add_message(
+                case,
+                "assistant",
+                msg,
+                meta={
+                    "phase": case.get("phase") or "chat",
+                    "mode": "chat" if case.get("chat_mode") == "open" else "diagnose",
+                    "spoken_reply": spoken,
+                    "verdict": "pending",
+                },
+            )
+            return {
+                "case": case,
+                "message": msg,
+                "spoken_reply": spoken,
+                "phase": case.get("phase") or "chat",
+                "mode": "diagnose",
+                "probe": None,
+                "verdict": "pending",
+                "solution": None,
+                "next_action": "chat",
+            }
+
+        # Hotword: próxima etapa / próximo passo
+        if NEXT_STEP_RE.search(user_text or "") and case.get("chat_mode") == "electronics":
+            dm = case.get("diagnostic_map") or build_diagnostic_map(
+                str(case.get("board_model") or ""),
+                str(case.get("symptom") or ""),
+                "",
+            )
+            case["diagnostic_map"] = dm
+            cur = int(dm.get("current_step") or 1)
+            steps = dm.get("steps") or []
+            max_id = max((int(s.get("id") or 0) for s in steps), default=3)
+            if cur >= max_id:
+                msg = (
+                    "Já estamos no último passo do mapa. Me diga a medição "
+                    "ou a peça suspeita — ou marque resolvido quando fechar."
+                )
+            else:
+                dm["current_step"] = cur + 1
+                step = next(
+                    (s for s in steps if int(s.get("id") or 0) == int(dm["current_step"])),
+                    None,
+                )
+                name = (step or {}).get("name") or f"Passo {dm['current_step']}"
+                ask = (step or {}).get("ask") or "Seguinte teste."
+                goal = (step or {}).get("goal") or ""
+                msg = f"**Próxima etapa — {name}.** {goal} {ask}".strip()
+            spoken = re.sub(r"[*_`]", "", msg)[:220]
+            self.memory.save(case)
+            self.memory.add_message(
+                case,
+                "assistant",
+                msg,
+                meta={
+                    "phase": "measure" if int(dm.get("current_step") or 1) >= 2 else "vision",
+                    "mode": "diagnose",
+                    "spoken_reply": spoken,
+                    "verdict": "pending",
+                    "diagnostic_step": dm.get("current_step"),
+                },
+            )
+            return {
+                "case": case,
+                "message": msg,
+                "spoken_reply": spoken,
+                "phase": case.get("phase"),
+                "mode": "diagnose",
+                "probe": None,
+                "verdict": "pending",
+                "solution": None,
+                "next_action": "ask_measurement",
+            }
 
         # Retomar caso anterior ("placa de ontem", "continuando"…)
         if is_resume_intent(user_text) and case.get("chat_mode") == "open" and not case.get("board_model"):
@@ -495,14 +630,8 @@ class DiagnosticAgent:
             )
         )
         should_research = (
-            needs_from_llm
-            or ask_research
-            or (bool(case.get("board_model")) and not case.get("last_research"))
-            or (
-                case.get("chat_mode") == "electronics"
-                and not case.get("last_research")
-                and bool(case.get("board_model") or case.get("symptom"))
-            )
+            (needs_from_llm or ask_research or not case.get("last_research"))
+            and is_researchable_device(str(case.get("board_model") or ""))
         )
         extra = _brain_context(case, user_text, force_research=should_research)
 

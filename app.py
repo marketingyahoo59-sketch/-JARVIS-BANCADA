@@ -10,12 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from agent.diagnostic import DiagnosticAgent
 from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
-from agent.listen_component import continuous_listen
 from agent.memory import CaseMemory
 from agent.profile import address_user, list_presets, load_profile, save_profile
 from agent.safety import safety_brief, safety_checklist
@@ -317,21 +315,11 @@ def pt(mapa: dict[str, str], valor: str | None, padrao: str = "—") -> str:
 
 def inject_hud() -> None:
     st.markdown(HUD_CSS, unsafe_allow_html=True)
-    components.html(
-        """
-        <script>
-        try {
-          const d = window.parent.document;
-          let link = d.querySelector('link[rel="manifest"]');
-          if (!link) { link = d.createElement('link'); link.rel='manifest'; d.head.appendChild(link); }
-          link.href = '/app/static/manifest.json';
-          if ('serviceWorker' in window.parent.navigator) {
-            window.parent.navigator.serviceWorker.register('/app/static/sw.js').catch(()=>{});
-          }
-        } catch (e) {}
-        </script>
-        """,
-        height=0,
+    # Manifest/SW via link estático — NÃO usar components.html mexendo no
+    # parent.document (isso causava NotFoundError: removeChild no React).
+    st.markdown(
+        '<link rel="manifest" href="/app/static/manifest.json" />',
+        unsafe_allow_html=True,
     )
 
 
@@ -582,9 +570,9 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
         f"""
         <div class="j-hero">
           <h2>Sistemas à sua disposição, {who}</h2>
-          <p>Chat livre — parceiro de bancada, não robô travado. Mande foto quando quiser.
-          Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu assumo a liderança com o multímetro.
-          Pode retomar: “continuando a placa de ontem”.</p>
+          <p>Parceiro de bancada — sem modo robô. Mande foto quando quiser.
+          Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu assumo o multímetro.
+          Atalhos: <b>anota:</b> … · <b>próxima etapa</b> · retomar “placa de ontem”.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -803,27 +791,8 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
 
 
 def mount_listen_slot() -> str | None:
-    """Iframe SEMPRE montado (chave fixa). Desligar só pausa — não desmonta."""
-    busy = (
-        bool(st.session_state.agent_speaking)
-        or st.session_state.get("voice_status") == "processing"
-    )
-    active = bool(st.session_state.listen_on)
-    transcript = continuous_listen(
-        active=active,
-        paused=(not active) or busy,
-        agent_speaking=(not active) or busy,
-        key="jarvis_listen_stable",
-    )
-    if not active or busy or not transcript:
-        return None
-    digest = _voice_hash(transcript)
-    if digest == st.session_state.last_voice_hash:
-        return None
-    st.session_state.last_voice_hash = digest
-    st.session_state.voice_status = "processing"
-    st.session_state.agent_speaking = True
-    return transcript
+    """Iframe de escuta contínua REMOVIDO (anti-removeChild). Sempre None."""
+    return None
 
 
 def render_audio_slot() -> None:
@@ -840,7 +809,6 @@ def render_audio_slot() -> None:
 
 
 def consume_continuous_voice(key: str | None = None) -> str | None:
-    # Compat: a escuta global já foi montada em main(); só consome pendência.
     pending = st.session_state.pop("_pending_voice", None)
     return pending
 
@@ -862,9 +830,37 @@ def compact_controls() -> None:
     with c1:
         st.session_state.voice_out = st.toggle("JARVIS fala", value=st.session_state.voice_out)
     with c2:
-        st.session_state.listen_on = st.toggle("Escuta contínua", value=st.session_state.listen_on)
+        # Escuta contínua via iframe removida — causa crash React removeChild no Cloud Run.
+        st.session_state.listen_on = st.toggle(
+            "Mic rápido",
+            value=st.session_state.listen_on,
+            help="Abre gravação estável (sem iframe). A escuta contínua antiga travava a UI.",
+        )
     with c3:
         st.session_state.safety_ack = st.toggle("Segurança OK", value=st.session_state.safety_ack)
+    if st.session_state.listen_on:
+        st.caption("Fale no microfone abaixo e envie — sem iframe, sem trava.")
+        mic = st.audio_input("Falar com o JARVIS", key="jarvis_mic_fast")
+        if mic is not None:
+            digest = hashlib.sha1(mic.getvalue()).hexdigest()
+            if digest != st.session_state.last_manual_audio_hash:
+                st.session_state.last_manual_audio_hash = digest
+                st.session_state.voice_status = "processing"
+                st.session_state.agent_speaking = True
+                with st.spinner("Transcrevendo…"):
+                    try:
+                        transcript = transcribe_audio(
+                            mic.getvalue(), filename=mic.name or "fala.wav"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        st.session_state.agent_speaking = False
+                        st.session_state.voice_status = "idle"
+                        st.error(f"Áudio: {exc}")
+                        st.stop()
+                if transcript and transcript.strip():
+                    st.session_state._pending_voice = transcript.strip()
+                    st.rerun()
+
 
 
 def page_config() -> None:
@@ -1428,8 +1424,8 @@ def main() -> None:
     ag = get_agent()
     nav = top_menu()
 
-    # Microfone global: mesma posição no DOM em todo rerun (anti-removeChild).
-    if nav in {"bancada", "casos"} or True:
+    # Sem iframe de microfone (removeChild). Voz via st.audio_input em compact_controls.
+    if False:
         heard = mount_listen_slot()
         if heard:
             st.session_state._pending_voice = heard
