@@ -4,6 +4,9 @@ __pycache__/
 .env
 data/cases/*.json
 data/uploads/*
+data/sensors/*
+data/profile.json
 !data/cases/.gitkeep
 !data/uploads/.gitkeep
+!data/sensors/.gitkeep
 .streamlit/secrets.toml

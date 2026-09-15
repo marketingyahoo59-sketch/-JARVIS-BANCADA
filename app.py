@@ -6,6 +6,7 @@ Diagnóstico eletrônico com voz, visão, pesquisa e memória.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -16,7 +17,9 @@ from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
 from agent.listen_component import continuous_listen
 from agent.memory import CaseMemory
+from agent.profile import address_user, list_presets, load_profile, save_profile
 from agent.safety import safety_brief, safety_checklist
+from agent.system_hud import host_metrics, load_remote_pc_sensor
 from agent.vision import annotate_board, zoom_around_probes
 from agent.voice import extract_intake_from_speech, speak_text, transcribe_audio
 
@@ -163,6 +166,53 @@ div[data-testid="stChatMessage"] {
   border-radius: 14px !important;
 }
 
+.j-statusstrip {
+  display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:8px; margin-top:10px;
+}
+.j-stat {
+  border:1px solid rgba(0,209,255,.25); border-radius:4px; padding:.45rem .55rem;
+  background: linear-gradient(160deg, rgba(0,40,70,.55), rgba(0,12,28,.5));
+  transform: perspective(700px) rotateX(4deg) rotateY(-1deg);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  box-shadow: 0 10px 22px rgba(0,0,0,.35), inset 0 0 16px rgba(0,209,255,.08), 0 0 12px rgba(0,209,255,.12);
+}
+.j-stat b { display:block; font-family:'Orbitron',sans-serif; font-size:.58rem; color:#F5B301; letter-spacing:.1em; }
+.j-stat span { color:#B7D7F0; font-size:.9rem; font-weight:600; }
+.j-stat.hot span { color:#ff7b7b; text-shadow:0 0 10px rgba(255,80,80,.45); }
+.j-stat.ok span { color:#86efac; }
+.j-greet {
+  margin-top:.35rem; color:#7DF9FF; font-family:'Orbitron',sans-serif;
+  font-size:.72rem; letter-spacing:.1em; text-align:right;
+}
+.j-scan {
+  height:2px; margin-top:8px;
+  background: linear-gradient(90deg, transparent, #00D1FF, #F5B301, #00D1FF, transparent);
+  background-size: 200% 100%; animation: scan 2.8s linear infinite;
+  opacity:.85;
+}
+@keyframes scan { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.j-rings {
+  display:flex; flex-wrap:wrap; gap:12px; margin: .6rem 0 1rem;
+}
+.j-ring {
+  width:92px; height:92px; border-radius:50%;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  border:2px solid rgba(0,209,255,.45);
+  box-shadow: 0 0 18px rgba(0,209,255,.25), inset 0 0 18px rgba(0,209,255,.12);
+  background: radial-gradient(circle at 40% 35%, rgba(0,209,255,.18), rgba(0,10,25,.7));
+  transform: perspective(500px) rotateX(8deg);
+}
+.j-ring b { font-family:'Orbitron',sans-serif; font-size:.95rem; color:#7DF9FF; }
+.j-ring span { font-size:.58rem; letter-spacing:.12em; color:#8FB6D8; text-transform:uppercase; }
+.j-risk {
+  border:1px solid rgba(245,179,1,.35); padding:.85rem 1rem; margin-top:.75rem;
+  background: rgba(40,24,0,.35); color:#FFE08A; border-radius:12px;
+  box-shadow: inset 0 0 20px rgba(245,179,1,.08);
+}
+@media (max-width: 900px) {
+  .j-statusstrip { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .j-greet { text-align:left; }
+}
 @media (max-width: 768px) {
   .block-container { padding-left:.65rem !important; padding-right:.65rem !important; }
   .j-shell { border-radius:14px; padding:.7rem; }
@@ -228,14 +278,61 @@ def ensure_session() -> None:
 def top_menu() -> str:
     info = get_agent().provider_info()
     model = info.get("model") or ("demo" if info.get("mock") else "IA")
+    profile = load_profile()
+    who = address_user(profile)
+    host = host_metrics()
+    remote = load_remote_pc_sensor()
+    cpu = host.get("cpu_percent")
+    ram = host.get("ram_percent")
+    cpu_s = f"{cpu:.0f}%" if isinstance(cpu, (int, float)) else "—"
+    ram_s = f"{ram:.0f}%" if isinstance(ram, (int, float)) else "—"
+    temp_cls = ""
+    if remote and not remote.get("stale"):
+        temps = remote.get("temperatures") or []
+        if temps:
+            pc_temp = f"{temps[0]['celsius']}°C"
+            try:
+                tc = float(temps[0]["celsius"])
+                temp_cls = "hot" if tc >= 80 else ("ok" if tc < 70 else "")
+            except Exception:
+                pass
+        else:
+            pc_temp = f"CPU {remote.get('cpu_percent', '—')}%"
+            temp_cls = "ok"
+        pc_label = "PC LOCAL"
+    else:
+        temps = host.get("temperatures") or []
+        if temps:
+            pc_temp = f"{temps[0]['celsius']}°C"
+            temp_cls = "ok"
+        else:
+            pc_temp = "sensor off"
+        pc_label = host.get("label") or "HOST"
+    hour = datetime.now().hour
+    greet = "BOM DIA" if hour < 12 else ("BOA TARDE" if hour < 18 else "BOA NOITE")
     st.markdown(
         f"""
-        <div class="j-shell"><div class="j-row">
-          <div class="j-brand">
-            <div class="j-arc"></div>
-            <div><h1>JARVIS</h1><p>de bancada · {model}</p></div>
+        <div class="j-shell">
+          <div class="j-row">
+            <div class="j-brand">
+              <div class="j-arc"></div>
+              <div>
+                <h1>JARVIS</h1>
+                <p>COMMAND CENTER · {model}</p>
+              </div>
+            </div>
+            <div class="j-greet">{greet}, {who.upper()} · SISTEMAS ONLINE</div>
           </div>
-        </div></div>
+          <div class="j-scan"></div>
+          <div class="j-statusstrip">
+            <div class="j-stat"><b>OPERADOR</b><span>{who}</span></div>
+            <div class="j-stat"><b>OFICINA</b><span>{profile.get('workshop','—')}</span></div>
+            <div class="j-stat"><b>CPU HOST</b><span>{cpu_s}</span></div>
+            <div class="j-stat"><b>RAM HOST</b><span>{ram_s}</span></div>
+            <div class="j-stat {temp_cls}"><b>{pc_label}</b><span>{pc_temp}</span></div>
+            <div class="j-stat"><b>IA</b><span>{(info.get('active') or '—').upper()}</span></div>
+          </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -245,6 +342,7 @@ def top_menu() -> str:
         "falhas": "🧰 Falhas",
         "seguranca": "🛡️ Segurança",
         "sistemas": "🛰️ Sistemas",
+        "config": "⚙️ Config",
     }
     cols = st.columns(len(labels))
     for col, (key, label) in zip(cols, labels.items()):
@@ -386,23 +484,168 @@ def compact_controls() -> None:
         st.session_state.safety_ack = st.toggle("Segurança OK", value=st.session_state.safety_ack)
 
 
-def page_sistemas(ag: DiagnosticAgent) -> None:
-    info = ag.provider_info()
+def page_config() -> None:
+    profile = load_profile()
+    who = address_user(profile)
+    st.markdown(
+        f"""
+        <div class="j-hero">
+          <h2>CONFIGURAÇÃO · PERFIL</h2>
+          <p>Operador ativo: <b>{who}</b>. O JARVIS usa este nome nas saudações e no HUD.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    presets = list_presets()
+    names = [p["display_name"] for p in presets]
+    cur = profile.get("display_name", "Sr. Igor")
+    idx = names.index(cur) if cur in names else 0
+    escolha = st.selectbox("Perfil rápido", names, index=idx)
+    if st.button("Ativar perfil selecionado", type="primary", use_container_width=True):
+        chosen = next(p for p in presets if p["display_name"] == escolha)
+        save_profile(chosen)
+        st.success(f"Perfil ativo: {chosen['display_name']}")
+        st.rerun()
+
+    st.markdown('<div class="j-panel"><h3>Editar dados do técnico</h3>', unsafe_allow_html=True)
+    with st.form("form_perfil"):
+        dn = st.text_input("Como o JARVIS chama (ex: Sr. Igor)", value=profile.get("display_name", ""))
+        full = st.text_input("Nome completo", value=profile.get("full_name", ""))
+        title = st.text_input("Função", value=profile.get("title", ""))
+        workshop = st.text_input("Oficina / bancada", value=profile.get("workshop", ""))
+        specialty = st.text_input("Especialidade", value=profile.get("specialty", ""))
+        shifts = ["Integral", "Manhã", "Tarde", "Noite"]
+        shift_cur = profile.get("shift", "Integral")
+        shift = st.selectbox(
+            "Turno",
+            shifts,
+            index=shifts.index(shift_cur) if shift_cur in shifts else 0,
+        )
+        notes = st.text_area("Notas", value=profile.get("notes", ""), height=80)
+        call_by = st.checkbox("Chamar pelo nome", value=bool(profile.get("call_by_name", True)))
+        if st.form_submit_button("Salvar perfil", type="primary", use_container_width=True):
+            save_profile(
+                {
+                    **profile,
+                    "display_name": dn.strip() or "Sr. Igor",
+                    "full_name": full.strip(),
+                    "title": title.strip(),
+                    "workshop": workshop.strip(),
+                    "specialty": specialty.strip(),
+                    "shift": shift,
+                    "notes": notes.strip(),
+                    "call_by_name": call_by,
+                }
+            )
+            st.success(f"Salvo. JARVIS vai chamar: {dn.strip() or 'Sr. Igor'}")
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown(
         """
+        <div class="j-panel"><h3>Temperatura real do PC</h3>
+        <p>1) No Windows, na pasta do projeto: <code>pip install -r requirements.txt</code><br>
+        2) Terminal A: <code>python scripts/sensor_local.py</code> (deixe aberto)<br>
+        3) Terminal B: <code>streamlit run app.py --server.port 3847</code><br>
+        4) Abra <b>Sistemas</b> — CPU/RAM/temp vêm do seu PC.<br>
+        No site Render, CPU/RAM são do <b>servidor</b>, não da bancada.</p></div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="j-risk"><b>RISCOS</b> · Render Free pode dormir se o keep-alive falhar ·
+        GPT-5.5 consome créditos · chave API no Render — não partilhar ·
+        temperatura no cloud ≠ PC da bancada · confirmação antes de SOLUÇÃO é obrigatória ·
+        não mexa em alta tensão sem EPI.</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def page_sistemas(ag: DiagnosticAgent) -> None:
+    info = ag.provider_info()
+    profile = load_profile()
+    who = address_user(profile)
+    host = host_metrics()
+    remote = load_remote_pc_sensor()
+    live = remote if (remote and not remote.get("stale")) else host
+    src = "PC LOCAL (sensor)" if (remote and not remote.get("stale")) else (host.get("label") or "HOST")
+
+    st.markdown(
+        f"""
         <div class="j-hero">
-          <h2>SISTEMAS ONLINE</h2>
-          <p>Núcleo cognitivo, visão, voz e memória de falhas — status da armadura de bancada.</p>
+          <h2>SISTEMAS ONLINE · {who.upper()}</h2>
+          <p>Telemetria do núcleo: CPU, RAM, temperatura e estado da armadura. Fonte: {src}.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
     render_status_chip()
     compact_controls()
-    cols = st.columns(3)
-    cols[0].metric("Provedor", (info.get("active") or "—").upper())
-    cols[1].metric("Modelo", info.get("model") or "—")
-    cols[2].metric("Modo", "DEMO" if info.get("mock") else "COMBATE")
+
+    cpu = live.get("cpu_percent")
+    ram = live.get("ram_percent")
+    temps = live.get("temperatures") or []
+    temp_s = f"{temps[0]['celsius']:.0f}°C" if temps else "N/D"
+    disk = live.get("disk_percent")
+    disk_s = f"{disk:.0f}%" if isinstance(disk, (int, float)) else "—"
+    cpu_s = f"{cpu:.0f}%" if isinstance(cpu, (int, float)) else "—"
+    ram_s = f"{ram:.0f}%" if isinstance(ram, (int, float)) else "—"
+
+    st.markdown(
+        f"""
+        <div class="j-rings">
+          <div class="j-ring"><b>{cpu_s}</b><span>CPU</span></div>
+          <div class="j-ring"><b>{ram_s}</b><span>RAM</span></div>
+          <div class="j-ring"><b>{temp_s}</b><span>TEMP</span></div>
+          <div class="j-ring"><b>{disk_s}</b><span>DISK</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("CPU", cpu_s)
+    if live.get("ram_used_gb") is not None:
+        m2.metric("RAM", f"{live.get('ram_used_gb')} / {live.get('ram_total_gb')} GB")
+    else:
+        m2.metric("RAM", ram_s)
+    m3.metric("Temperatura", temp_s if temps else "Não disponível")
+    m4.metric("Host", live.get("hostname") or host.get("hostname") or "—")
+
+    if temps:
+        for t in temps[:6]:
+            st.caption(f"Sensor `{t.get('sensor')}` → **{t.get('celsius')} °C**")
+    else:
+        st.info(
+            "Temperatura não disponível neste host. No Windows rode "
+            "`python scripts/sensor_local.py` na pasta do projeto."
+        )
+
+    if remote:
+        age = remote.get("age_sec")
+        if remote.get("stale"):
+            st.warning(f"Sensor local desatualizado ({age}s). Reinicie `scripts/sensor_local.py`.")
+        else:
+            st.success(f"Sensor local ativo · idade {age}s · {remote.get('hostname', '')}")
+
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Provedor", (info.get("active") or "—").upper())
+    c2.metric("Modelo", info.get("model") or "—")
+    c3.metric("Modo", "DEMO" if info.get("mock") else "COMBATE")
+    st.caption(
+        "Keep-alive: GitHub Action a cada 5 min → https://jarvis-bancada.onrender.com/"
+    )
+    st.markdown(
+        """
+        <div class="j-risk"><b>RISCOS OPERACIONAIS</b> · Free Render dorme sem ping ·
+        cold start ~30–60s · API paga por uso · métricas do site ≠ PC da bancada ·
+        confirme medição antes de SOLUÇÃO · EPI em alta tensão.</div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.caption("No celular: Chrome → menu → Instalar app (PWA).")
 
 
@@ -482,12 +725,15 @@ def page_casos(ag: DiagnosticAgent) -> None:
 
 
 def intake_form(ag: DiagnosticAgent) -> None:
+    who = address_user()
+    hour = datetime.now().hour
+    greet = "Bom dia" if hour < 12 else ("Boa tarde" if hour < 18 else "Boa noite")
     st.markdown(
-        """
+        f"""
         <div class="j-hero">
-          <h2>SISTEMAS À SUA DISPOSIÇÃO</h2>
-          <p>Diga o modelo da placa e o sintoma. Eu vejo, pesquiso, guio o multímetro e falo o próximo passo —
-          como se a bancada ganhasse um J.A.R.V.I.S.</p>
+          <h2>{greet.upper()}, {who.upper()}</h2>
+          <p>Sistemas à sua disposição. Diga o modelo da placa e o sintoma. Eu vejo, pesquiso,
+          guio o multímetro e falo o próximo passo — J.A.R.V.I.S. na bancada.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -786,6 +1032,8 @@ def main() -> None:
         page_casos(ag)
     elif nav == "sistemas":
         page_sistemas(ag)
+    elif nav == "config":
+        page_config()
     else:
         if st.session_state.case_id:
             case_view(ag)
