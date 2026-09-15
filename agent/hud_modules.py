@@ -310,7 +310,7 @@ def render_module_card(mod: dict[str, Any]) -> None:
     side = str(mod.get("side") or "right")
     mod_id = mod.get("id") or "mod"
     tok = refresh_token(side)
-    with st.container(key=f"hud_mod_{mod_id}_r{tok}"):
+    with st.container():
         st.markdown(
             f'<div class="j-module pop-in"><div class="j-module-bar"><span>{title}</span>'
             f'<span class="j-module-id">{mod_id}</span></div>',

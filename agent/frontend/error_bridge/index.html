@@ -32,12 +32,17 @@
 
         var KEY = "jarvis_ui_errors_queue";
 
+        function isNoise(msg) {
+          var s = String(msg || "").toLowerCase();
+          return s.indexOf("removechild") >= 0 || s.indexOf("notfounderror") >= 0;
+        }
+
         function pushError(err) {
           try {
-            var w = window.parent;
-            var prev = JSON.parse(w.sessionStorage.getItem(KEY) || "[]");
+            if (isNoise(err && err.message)) return;
+            var prev = JSON.parse(localStorage.getItem(KEY) || "[]");
             prev.push(err);
-            w.sessionStorage.setItem(KEY, JSON.stringify(prev.slice(-30)));
+            localStorage.setItem(KEY, JSON.stringify(prev.slice(-30)));
           } catch (e) {}
         }
 
@@ -60,27 +65,26 @@
           );
           target.addEventListener("unhandledrejection", function (e) {
             var reason = e.reason;
+            var msg = String(
+              reason && reason.message ? reason.message : reason || "rejection"
+            );
+            if (isNoise(msg)) return;
             pushError({
-              message: String(
-                reason && reason.message ? reason.message : reason || "rejection"
-              ),
+              message: msg,
               type: "unhandledrejection",
               at: new Date().toISOString(),
             });
           });
         }
 
-        try {
-          bind(window.parent);
-        } catch (e) {}
         bind(window);
 
         function flush() {
           try {
-            var raw = window.parent.sessionStorage.getItem(KEY) || "[]";
+            var raw = localStorage.getItem(KEY) || "[]";
             var items = JSON.parse(raw);
             if (items && items.length) {
-              window.parent.sessionStorage.setItem(KEY, "[]");
+              localStorage.setItem(KEY, "[]");
               setComponentValue(JSON.stringify(items));
             }
           } catch (e) {}
@@ -89,7 +93,7 @@
         componentReady();
         setFrameHeight(0);
         flush();
-        setInterval(flush, 5000);
+        setInterval(flush, 8000);
       })();
     </script>
   </body>

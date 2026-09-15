@@ -117,7 +117,10 @@
           el.textContent = text;
           toasts.appendChild(el);
           setTimeout(function () {
-            if (el.parentNode) el.parentNode.removeChild(el);
+            try {
+              if (el && el.remove) el.remove();
+              else if (el.parentNode) el.parentNode.removeChild(el);
+            } catch (e) {}
             setFrameHeight(Math.max(28, document.getElementById("root").offsetHeight));
           }, 4200);
         }

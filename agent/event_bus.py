@@ -81,7 +81,6 @@ def mount_event_bus() -> None:
         "events": events,
         "telemetry": telem,
         "music_on": music_on,
-        "tick": time.time(),
     }
     if _bus_component is None:
         # fallback: caption se houver eventos

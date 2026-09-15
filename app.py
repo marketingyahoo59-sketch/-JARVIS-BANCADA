@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 # Bump this on every deploy so Cloud Run shows the update in the corner.
-APP_VERSION = "v2.2.1-hotfix"
+APP_VERSION = "v2.2.2-stable"
 from agent.diagnostic import DiagnosticAgent
 from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
@@ -285,6 +285,19 @@ div[data-testid="element-container"]:has(.hud-overlay) {
 .j-probe-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.75rem; }
 .j-probe-hint { color: #7fdfff; font-size: 0.82rem; margin-top: 0.35rem; }
 .j-solution-fail { color: #ff6b6b; font-weight: 600; }
+
+.j-chat-log { display: flex; flex-direction: column; gap: 0.65rem; margin: 0.5rem 0 0.85rem; }
+.j-chat-row { display: flex; flex-direction: column; gap: 0.2rem; }
+.j-chat-label { font-size: 0.72rem; letter-spacing: 0.08em; color: #5fd4ff; opacity: 0.85; }
+.j-chat-bubble {
+  border: 1px solid rgba(0,242,255,.22); border-radius: 10px; padding: 0.55rem 0.7rem;
+  background: rgba(0, 28, 40, 0.35); color: #d7f7ff; line-height: 1.45; font-size: 0.92rem;
+}
+.j-chat-assistant .j-chat-bubble { border-color: rgba(0,242,255,.28); }
+.j-chat-user .j-chat-bubble { border-color: rgba(255,170,0,.25); background: rgba(40,28,0,.22); }
+.j-chat-meta { font-size: 0.78rem; color: #7fdfff; margin-top: 0.35rem; }
+.j-muted { color: #7fdfff; font-size: 0.85rem; opacity: 0.85; }
+.j-vision-img { width: 100%; border-radius: 8px; border: 1px solid rgba(0,242,255,.25); margin-top: 0.35rem; }
 
 @keyframes jpulse {
   0%,100% { box-shadow: 0 0 0 1px rgba(255,170,0,.12), 0 0 28px rgba(0,242,255,.15), inset 0 0 40px rgba(0,242,255,.04); }
@@ -883,6 +896,67 @@ def render_probe_card_html(probe: dict | None) -> str:
 </div>{hint}</div>"""
 
 
+def _img_data_url(data: bytes, mime: str = "image/jpeg") -> str:
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def render_chat_history_html(messages: list[dict], who: str) -> str:
+    """Histórico inteiro em HTML — um único bloco estável (anti-removeChild)."""
+    rows: list[str] = ['<div class="j-chat-log">']
+    for msg in messages or []:
+        role = msg.get("role")
+        cls = "j-chat-assistant" if role == "assistant" else "j-chat-user"
+        label = "JARVIS" if role == "assistant" else _esc_html(who)
+        body = _esc_html(msg.get("content") or "").replace("\n", "<br/>")
+        meta = msg.get("meta") or {}
+        extra = ""
+        if meta.get("image"):
+            extra += f'<div class="j-chat-meta">📎 foto: {_esc_html(meta["image"])}</div>'
+        if meta.get("probe") and role == "assistant":
+            extra += render_probe_card_html(meta["probe"])
+        if meta.get("solution") and meta.get("verdict") == "fail":
+            extra += render_solution_html(meta["solution"])
+        rows.append(
+            f'<div class="j-chat-row {cls}">'
+            f'<div class="j-chat-label">{label}</div>'
+            f'<div class="j-chat-bubble">{body}{extra}</div></div>'
+        )
+    rows.append("</div>")
+    return "".join(rows)
+
+
+def render_vision_panel_html(
+    image_bytes: bytes | None,
+    image_name: str | None,
+    last_meta: dict,
+) -> str:
+    """Visão em HTML puro — evita st.image condicional."""
+    head = '<div class="j-panel"><h3>Visão</h3>'
+    if not image_bytes:
+        return head + '<p class="j-muted">Sem foto — anexe no composer quando quiser.</p></div>'
+    coords = []
+    if last_meta.get("probe"):
+        coords = last_meta["probe"].get("coordinates") or []
+    parts = [head]
+    if coords:
+        annotated = annotate_board(image_bytes, coords)
+        parts.append(
+            f'<img class="j-vision-img" src="{_img_data_url(annotated)}" alt="Pontas"/>'
+        )
+        zoom = zoom_around_probes(image_bytes, coords)
+        if zoom is not None:
+            parts.append(
+                f'<img class="j-vision-img" src="{_img_data_url(zoom)}" alt="Zoom"/>'
+            )
+    else:
+        parts.append(
+            f'<img class="j-vision-img" src="{_img_data_url(image_bytes)}" '
+            f'alt="{_esc_html(image_name or "foto")}"/>'
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def render_solution_html(solution: dict | None) -> str:
     if not solution:
         return ""
@@ -996,16 +1070,19 @@ def submit_user_turn(
         st.session_state.case_id = result["switched_case_id"]
     elif result.get("case", {}).get("case_id"):
         st.session_state.case_id = result["case"]["case_id"]
+    flashes: list[str] = []
     if result.get("awaiting_confirm"):
-        st.info("Aguardando confirmação da medição.")
+        flashes.append("Aguardando confirmação da medição.")
     if result.get("safety_brief"):
-        st.caption(f"🛡️ {result['safety_brief']}")
+        flashes.append(f"🛡️ {result['safety_brief']}")
     actions = result.get("agent_actions") or []
     if actions:
         st.session_state.agent_actions = actions[-20:]
         note = format_actions_for_user(actions)
         if note:
-            st.caption(f"⚙️ {note}")
+            flashes.append(f"⚙️ {note}")
+    if flashes:
+        st.session_state["_flash_notice"] = " · ".join(flashes)
     play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
     st.rerun()
 
@@ -1054,6 +1131,9 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
     )
     render_status_chip()
     compact_controls()
+    flash = st.session_state.pop("_flash_notice", None)
+    if flash:
+        st.caption(flash)
 
     cid = case["case_id"]
     cols = st.columns([1, 1, 1])
@@ -1094,22 +1174,10 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
             '<div class="j-cmd-title">ZONA DE COMANDO · CHAT</div>',
             unsafe_allow_html=True,
         )
-        # Histórico do chat — só markdown/HTML (sem widgets no loop → anti-removeChild)
-        for idx, msg in enumerate(case.get("messages", [])):
-            papel = "assistant" if msg["role"] == "assistant" else "user"
-            with st.chat_message(papel):
-                st.caption("JARVIS" if msg["role"] == "assistant" else who)
-                st.markdown(msg["content"])
-                meta = msg.get("meta") or {}
-                if meta.get("image"):
-                    st.caption(f"📎 foto: {meta['image']}")
-                extra_html = ""
-                if meta.get("probe") and msg["role"] == "assistant":
-                    extra_html += render_probe_card_html(meta["probe"])
-                if meta.get("solution") and meta.get("verdict") == "fail":
-                    extra_html += render_solution_html(meta["solution"])
-                if extra_html:
-                    st.markdown(extra_html, unsafe_allow_html=True)
+        st.markdown(
+            render_chat_history_html(case.get("messages", []), who),
+            unsafe_allow_html=True,
+        )
 
         last_meta: dict = {}
         for msg in reversed(case.get("messages", [])):
@@ -1121,39 +1189,38 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
         # Escuta global montada em main() — evita segundo iframe (crash removeChild).
 
         # Composer: foto + texto na mesma conversa
-        with st.container(key=f"chat_composer_{cid}"):
-            photo = st.file_uploader(
-                "Anexar foto na conversa",
-                type=["jpg", "jpeg", "png", "webp"],
-                key=f"chat_photo_{cid}",
-            )
-            prompt = st.chat_input("Mensagem, medição ou 'bom dia'…", key=f"chat_input_{cid}")
-            if prompt is not None:
-                image_bytes = image_name = None
-                image_mime = "image/jpeg"
-                text = prompt.strip()
-                if photo is not None:
-                    image_bytes = photo.getvalue()
-                    image_name = photo.name
-                    image_mime = photo.type or "image/jpeg"
-                    st.session_state.last_image_bytes = image_bytes
-                    st.session_state.last_image_name = image_name
-                    (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
-                    try:
-                        push_path(UPLOAD_DIR / f"{case['case_id']}_{image_name}")
-                    except Exception:
-                        pass
-                    if not text:
-                        text = "Analise a foto e diga o próximo passo."
-                if text:
-                    submit_user_turn(
-                        ag,
-                        case,
-                        text,
-                        image_bytes=image_bytes,
-                        image_name=image_name,
-                        image_mime=image_mime,
-                    )
+        photo = st.file_uploader(
+            "Anexar foto na conversa",
+            type=["jpg", "jpeg", "png", "webp"],
+            key=f"chat_photo_{cid}",
+        )
+        prompt = st.chat_input("Mensagem, medição ou 'bom dia'…", key=f"chat_input_{cid}")
+        if prompt is not None:
+            image_bytes = image_name = None
+            image_mime = "image/jpeg"
+            text = prompt.strip()
+            if photo is not None:
+                image_bytes = photo.getvalue()
+                image_name = photo.name
+                image_mime = photo.type or "image/jpeg"
+                st.session_state.last_image_bytes = image_bytes
+                st.session_state.last_image_name = image_name
+                (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                try:
+                    push_path(UPLOAD_DIR / f"{case['case_id']}_{image_name}")
+                except Exception:
+                    pass
+                if not text:
+                    text = "Analise a foto e diga o próximo passo."
+            if text:
+                submit_user_turn(
+                    ag,
+                    case,
+                    text,
+                    image_bytes=image_bytes,
+                    image_name=image_name,
+                    image_mime=image_mime,
+                )
 
         with st.expander("Documento ou resolução", expanded=False):
             st.caption("Voz: use **Mic rápido** acima (único slot de áudio — evita crash React).")
@@ -1214,75 +1281,55 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
             """,
             unsafe_allow_html=True,
         )
-        render_heal_panel()
         dm = case.get("diagnostic_map")
+        map_html = ['<div class="j-panel"><h3>Mapa de diagnóstico</h3>']
         if dm and mode == "electronics":
-            st.markdown('<div class="j-panel"><h3>Mapa de diagnóstico</h3>', unsafe_allow_html=True)
             cur = int(dm.get("current_step") or 1)
             for step in dm.get("steps") or []:
                 sid = int(step.get("id") or 0)
                 mark = "▶" if sid == cur else ("✓" if sid < cur else "○")
-                st.markdown(
-                    f"**{mark} Passo {sid} — {step.get('name')}**  \n"
-                    f"{step.get('goal')}  \n"
-                    f"_{step.get('ask')}_"
+                map_html.append(
+                    f"<p><b>{mark} Passo {sid} — {_esc_html(step.get('name'))}</b><br/>"
+                    f"{_esc_html(step.get('goal'))}<br/>"
+                    f"<i>{_esc_html(step.get('ask'))}</i></p>"
                 )
             if dm.get("research_hint"):
-                st.caption(f"Pista web: {dm['research_hint'][:180]}")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown('<div class="j-panel"><h3>Memória</h3>', unsafe_allow_html=True)
-        measures = case.get("measurements", [])
-        if measures:
-            st.dataframe(
-                [
-                    {
-                        "Ponto": m.get("point"),
-                        "Esperado": m.get("expected"),
-                        "Medido": m.get("measured"),
-                        "Resultado": pt(VERDICT_PT, m.get("verdict")),
-                    }
-                    for m in measures
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
+                map_html.append(
+                    f'<p class="j-muted">Pista web: {_esc_html(str(dm["research_hint"])[:180])}</p>'
+                )
         else:
-            st.caption("Nenhuma medição ainda — mande valores no chat.")
-        st.markdown("</div>", unsafe_allow_html=True)
+            map_html.append('<p class="j-muted">Modo técnico inativo — diga consertar/defeito.</p>')
+        map_html.append("</div>")
+        st.markdown("".join(map_html), unsafe_allow_html=True)
+
+        measures = case.get("measurements", [])
+        mem_rows = "".join(
+            f"<tr><td>{_esc_html(m.get('point'))}</td>"
+            f"<td>{_esc_html(m.get('expected'))}</td>"
+            f"<td>{_esc_html(m.get('measured'))}</td>"
+            f"<td>{_esc_html(pt(VERDICT_PT, m.get('verdict')))}</td></tr>"
+            for m in measures
+        )
+        if not mem_rows:
+            mem_rows = '<tr><td colspan="4" class="j-muted">Nenhuma medição ainda.</td></tr>'
+        st.markdown(
+            f"""<div class="j-panel"><h3>Memória</h3>
+<table class="j-probe-grid" style="width:100%;border-collapse:collapse">
+<thead><tr><th>Ponto</th><th>Esperado</th><th>Medido</th><th>Resultado</th></tr></thead>
+<tbody>{mem_rows}</tbody></table></div>""",
+            unsafe_allow_html=True,
+        )
 
         render_audio_slot()
 
-        # Painel visão sempre montado — estrutura DOM estável
-        with st.container(key=f"vision_panel_{cid}"):
-            st.markdown('<div class="j-panel"><h3>Visão</h3>', unsafe_allow_html=True)
-            if st.session_state.last_image_bytes:
-                coords = []
-                if last_meta.get("probe"):
-                    coords = last_meta["probe"].get("coordinates") or []
-                if coords:
-                    annotated = annotate_board(st.session_state.last_image_bytes, coords)
-                    st.image(
-                        annotated,
-                        caption="Pontas",
-                        use_container_width=True,
-                    )
-                    zoom = zoom_around_probes(st.session_state.last_image_bytes, coords)
-                    if zoom is not None:
-                        st.image(
-                            zoom,
-                            caption="Zoom",
-                            use_container_width=True,
-                        )
-                else:
-                    st.image(
-                        st.session_state.last_image_bytes,
-                        caption=st.session_state.last_image_name or "foto",
-                        use_container_width=True,
-                    )
-            else:
-                st.caption("Sem foto — anexe no composer quando quiser.")
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            render_vision_panel_html(
+                st.session_state.get("last_image_bytes"),
+                st.session_state.get("last_image_name"),
+                last_meta,
+            ),
+            unsafe_allow_html=True,
+        )
 
         st.caption(f"🛡️ {safety_brief(case.get('phase') if mode == 'electronics' else 'intake')}")
 
@@ -1297,14 +1344,13 @@ def mount_listen_slot() -> str | None:
 
 
 def render_audio_slot() -> None:
-    """Player SEMPRE montado com o mesmo widget — nunca troca st.audio ↔ caption."""
+    """Player SEMPRE montado — mesmo formato WAV (anti-removeChild)."""
     audio = st.session_state.get("last_tts_bytes") or _SILENT_WAV
-    fmt = "audio/mp3" if st.session_state.get("last_tts_bytes") else "audio/wav"
     autoplay = bool(st.session_state.pop("tts_autoplay", False))
     try:
-        st.audio(audio, format=fmt, autoplay=autoplay)
+        st.audio(audio, format="audio/wav", autoplay=autoplay)
     except TypeError:
-        st.audio(audio, format=fmt)
+        st.audio(audio, format="audio/wav")
 
 
 def consume_continuous_voice(key: str | None = None) -> str | None:
@@ -1730,20 +1776,10 @@ def case_view(ag: DiagnosticAgent) -> None:
         if case.get("pending_confirm"):
             st.warning("Confirme a medição: diga **confirmo** ou **não** se errou.")
 
-        cv_cid = case["case_id"]
-        for idx, msg in enumerate(case.get("messages", [])):
-            papel = "assistant" if msg["role"] == "assistant" else "user"
-            with st.chat_message(papel):
-                st.caption("JARVIS" if msg["role"] == "assistant" else "Você")
-                st.markdown(msg["content"])
-                meta = msg.get("meta") or {}
-                extra_html = ""
-                if meta.get("probe") and msg["role"] == "assistant":
-                    extra_html += render_probe_card_html(meta["probe"])
-                if meta.get("solution") and meta.get("verdict") == "fail":
-                    extra_html += render_solution_html(meta["solution"])
-                if extra_html:
-                    st.markdown(extra_html, unsafe_allow_html=True)
+        st.markdown(
+            render_chat_history_html(case.get("messages", []), "Você"),
+            unsafe_allow_html=True,
+        )
 
         last_meta: dict = {}
         for msg in reversed(case.get("messages", [])):
@@ -1899,7 +1935,7 @@ def case_view(ag: DiagnosticAgent) -> None:
 def main() -> None:
     ensure_session()
     # Self-heal: captura erros JS e injeta em session_state (sempre montado).
-    mount_self_heal_bridge()
+    # Self-heal desligado no pai — capturava removeChild do React e piorava a UI.
     mount_event_bus()
     inject_hud()
     ag = get_agent()
