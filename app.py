@@ -298,6 +298,7 @@ def ensure_session() -> None:
         "safety_ack": False,
         "last_manual_audio_hash": "",
         "nav": "bancada",
+        "greeted_once": False,
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -458,7 +459,7 @@ def submit_user_turn(
 ) -> None:
     st.session_state.case_id = case["case_id"]
     st.session_state.voice_status = "processing"
-    with st.spinner("JARVIS sincronizando sensores…"):
+    with st.spinner("JARVIS sincronizando…"):
         try:
             result = ag.handle_user(
                 case,
@@ -471,12 +472,240 @@ def submit_user_turn(
             st.session_state.voice_status = "listening"
             st.error(f"Falha de enlace com a IA: {exc}")
             st.stop()
+    # Retomada pode trocar o case_id
+    if result.get("switched_case_id"):
+        st.session_state.case_id = result["switched_case_id"]
+    elif result.get("case", {}).get("case_id"):
+        st.session_state.case_id = result["case"]["case_id"]
     if result.get("awaiting_confirm"):
         st.info("Aguardando confirmação da medição.")
     if result.get("safety_brief"):
         st.caption(f"🛡️ {result['safety_brief']}")
     play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
     st.rerun()
+
+
+def ensure_open_chat(ag: DiagnosticAgent) -> dict:
+    """Garante uma sessão de chat aberto (sem formulário)."""
+    if st.session_state.case_id:
+        case = ag.load_case(st.session_state.case_id)
+        if case:
+            return case
+    who = address_user()
+    out = ag.open_session(who)
+    st.session_state.case_id = out["case"]["case_id"]
+    if out.get("spoken_reply") and not st.session_state.get("greeted_once"):
+        st.session_state.greeted_once = True
+        # TTS da saudação inicial (opcional)
+        if st.session_state.get("voice_out", True):
+            play_agent_voice(out.get("spoken_reply") or "")
+    return out["case"]
+
+
+def open_chat_view(ag: DiagnosticAgent) -> None:
+    """Chat fluido estilo WhatsApp/ChatGPT — fotos e medições na conversa."""
+    case = ensure_open_chat(ag)
+    who = address_user()
+    mode = case.get("chat_mode") or "open"
+    mode_label = "MODO ESPECIALISTA" if mode == "electronics" else "CHAT ABERTO"
+    board = case.get("board_model") or "—"
+    symptom = case.get("symptom") or "—"
+
+    st.markdown(
+        f"""
+        <div class="j-hero">
+          <h2>Olá, {who}</h2>
+          <p>Fale comigo à vontade. Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu
+          assumo o diagnóstico com o multímetro. Pode retomar: “continuando a placa de ontem”.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"**{mode_label}** · caso `{case['case_id']}` · "
+        f"placa: **{board}** · sintoma: **{symptom}** · "
+        f"{pt(STATUS_PT, case.get('status'))}"
+    )
+    render_status_chip()
+    compact_controls()
+
+    cols = st.columns([1, 1, 1])
+    with cols[0]:
+        if st.button("Nova conversa", use_container_width=True):
+            st.session_state.case_id = None
+            st.session_state.greeted_once = False
+            st.session_state.last_image_bytes = None
+            st.session_state.last_voice_hash = ""
+            st.rerun()
+    with cols[1]:
+        if mode != "electronics" and st.button("Ativar especialista", use_container_width=True):
+            submit_user_turn(ag, case, "Quero ativar o modo especialista para consertar um equipamento")
+    with cols[2]:
+        if st.button("Casos salvos", use_container_width=True):
+            st.session_state.nav = "casos"
+            if "nav_segment" in st.session_state:
+                st.session_state.nav_segment = "casos"
+            st.rerun()
+
+    left, right = st.columns([1.45, 1], gap="large")
+    with left:
+        # Histórico do chat
+        for msg in case.get("messages", []):
+            papel = "assistant" if msg["role"] == "assistant" else "user"
+            with st.chat_message(papel):
+                st.caption("JARVIS" if msg["role"] == "assistant" else who)
+                st.markdown(msg["content"])
+                meta = msg.get("meta") or {}
+                if meta.get("image"):
+                    st.caption(f"📎 foto: {meta['image']}")
+                if meta.get("probe") and msg["role"] == "assistant":
+                    render_probe_card(meta["probe"])
+                if meta.get("solution") and meta.get("verdict") == "fail":
+                    render_solution(meta["solution"])
+
+        last_meta: dict = {}
+        for msg in reversed(case.get("messages", [])):
+            if msg.get("role") == "assistant" and msg.get("meta"):
+                last_meta = msg["meta"]
+                break
+
+        # Voz contínua
+        heard = consume_continuous_voice(key=f"listen_chat_{case['case_id']}")
+        if heard:
+            st.success(f"Ouvi: “{heard}”")
+            submit_user_turn(ag, case, heard)
+
+        # Composer: foto + texto na mesma conversa
+        with st.container():
+            photo = st.file_uploader(
+                "Anexar foto na conversa",
+                type=["jpg", "jpeg", "png", "webp"],
+                key=f"chat_photo_{case['case_id']}",
+            )
+            prompt = st.chat_input("Mensagem, medição ou 'bom dia'…")
+            if prompt is not None:
+                image_bytes = image_name = None
+                image_mime = "image/jpeg"
+                text = prompt.strip()
+                if photo is not None:
+                    image_bytes = photo.getvalue()
+                    image_name = photo.name
+                    image_mime = photo.type or "image/jpeg"
+                    st.session_state.last_image_bytes = image_bytes
+                    st.session_state.last_image_name = image_name
+                    (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                    if not text:
+                        text = "Analise a foto e diga o próximo passo."
+                if text:
+                    submit_user_turn(
+                        ag,
+                        case,
+                        text,
+                        image_bytes=image_bytes,
+                        image_name=image_name,
+                        image_mime=image_mime,
+                    )
+
+        with st.expander("Áudio manual ou documento"):
+            manual = st.audio_input("Gravação manual")
+            if manual is not None:
+                digest = hashlib.sha1(manual.getvalue()).hexdigest()
+                if digest != st.session_state.last_manual_audio_hash:
+                    st.session_state.last_manual_audio_hash = digest
+                    with st.spinner("Transcrevendo…"):
+                        try:
+                            transcript = transcribe_audio(
+                                manual.getvalue(), filename=manual.name or "fala.wav"
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"Áudio: {exc}")
+                            st.stop()
+                    image_bytes = image_name = None
+                    image_mime = "image/jpeg"
+                    if photo is not None:
+                        image_bytes = photo.getvalue()
+                        image_name = photo.name
+                        image_mime = photo.type or "image/jpeg"
+                        (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                    submit_user_turn(
+                        ag,
+                        case,
+                        transcript,
+                        image_bytes=image_bytes,
+                        image_name=image_name,
+                        image_mime=image_mime,
+                    )
+            doc = st.file_uploader(
+                "Esquema / PDF",
+                type=["pdf", "txt", "md"],
+                key=f"chat_doc_{case['case_id']}",
+            )
+            if doc is not None and st.button("Anexar documento", use_container_width=True):
+                with st.spinner("Lendo documento…"):
+                    try:
+                        result = ag.attach_document(case, doc.name, doc.getvalue())
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Documento: {exc}")
+                        st.stop()
+                play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
+                st.rerun()
+
+        with st.expander("Marcar resolvido (banco de falhas)"):
+            part = st.text_input("Peça que resolveu", placeholder="Ex: C905")
+            notes = st.text_input("Nota (opcional)")
+            if st.button("Salvar no arquivo de falhas", type="primary"):
+                if not part.strip():
+                    st.error("Informe a peça.")
+                else:
+                    ag.resolve_case(case, part.strip(), notes.strip())
+                    st.success("Salvo.")
+                    play_agent_voice(f"Caso resolvido. Salvei a troca de {part.strip()}.")
+                    st.rerun()
+
+    with right:
+        st.markdown('<div class="j-panel"><h3>Memória</h3>', unsafe_allow_html=True)
+        measures = case.get("measurements", [])
+        if measures:
+            st.dataframe(
+                [
+                    {
+                        "Ponto": m.get("point"),
+                        "Esperado": m.get("expected"),
+                        "Medido": m.get("measured"),
+                        "Resultado": pt(VERDICT_PT, m.get("verdict")),
+                    }
+                    for m in measures
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("Nenhuma medição ainda — mande valores no chat.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if st.session_state.last_tts_bytes:
+            st.audio(st.session_state.last_tts_bytes, format="audio/mp3")
+
+        if st.session_state.last_image_bytes:
+            st.markdown('<div class="j-panel"><h3>Visão</h3>', unsafe_allow_html=True)
+            coords = []
+            if last_meta.get("probe"):
+                coords = last_meta["probe"].get("coordinates") or []
+            if coords:
+                annotated = annotate_board(st.session_state.last_image_bytes, coords)
+                st.image(annotated, caption="Pontas", use_container_width=True)
+                zoom = zoom_around_probes(st.session_state.last_image_bytes, coords)
+                if zoom is not None:
+                    st.image(zoom, caption="Zoom", use_container_width=True)
+            else:
+                st.image(
+                    st.session_state.last_image_bytes,
+                    caption=st.session_state.last_image_name or "foto",
+                    use_container_width=True,
+                )
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.caption(f"🛡️ {safety_brief(case.get('phase') if mode == 'electronics' else 'intake')}")
 
 
 def consume_continuous_voice(key: str) -> str | None:
@@ -1076,10 +1305,7 @@ def main() -> None:
     elif nav == "config":
         page_config()
     else:
-        if st.session_state.case_id:
-            case_view(ag)
-        else:
-            intake_form(ag)
+        open_chat_view(ag)
 
 
 if __name__ == "__main__":

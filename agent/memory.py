@@ -28,18 +28,23 @@ class CaseMemory:
 
     def create(
         self,
-        board_model: str,
-        symptom: str,
+        board_model: str = "",
+        symptom: str = "",
         case_id: str | None = None,
+        *,
+        chat_mode: str = "open",
+        operator_name: str = "",
     ) -> dict[str, Any]:
         case = {
             "case_id": case_id or self.new_case_id(),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "board_model": board_model,
-            "symptom": symptom,
-            "status": "intake",
-            "phase": "intake",
+            "board_model": board_model or "",
+            "symptom": symptom or "",
+            "chat_mode": chat_mode,  # open | electronics
+            "operator_name": operator_name or "",
+            "status": "open" if chat_mode == "open" else "intake",
+            "phase": "chat" if chat_mode == "open" else "intake",
             "messages": [],
             "measurements": [],
             "suspect_components": [],
@@ -53,6 +58,31 @@ class CaseMemory:
         }
         self.save(case)
         return case
+
+    def find_resumable(
+        self,
+        query: str = "",
+        *,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Casos recentes para 'continuar a placa de ontem'."""
+        items = self.list_cases()
+        q = (query or "").lower()
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for it in items:
+            if it.get("status") in {"resolved", "abandoned"}:
+                continue
+            blob = f"{it.get('board_model','')} {it.get('symptom','')}".lower()
+            score = 0
+            if q and q in blob:
+                score += 5
+            if it.get("chat_mode") == "electronics" or it.get("board_model"):
+                score += 2
+            if it.get("measurements", 0):
+                score += 1
+            scored.append((score, it))
+        scored.sort(key=lambda x: (x[0], x[1].get("updated_at", "")), reverse=True)
+        return [it for _, it in scored[:limit]]
 
     def load(self, case_id: str) -> dict[str, Any] | None:
         path = self.path_for(case_id)
@@ -79,6 +109,7 @@ class CaseMemory:
                         "board_model": data.get("board_model", "?"),
                         "symptom": data.get("symptom", ""),
                         "status": data.get("status", ""),
+                        "chat_mode": data.get("chat_mode", "electronics"),
                         "updated_at": data.get("updated_at", ""),
                         "measurements": len(data.get("measurements", [])),
                     }

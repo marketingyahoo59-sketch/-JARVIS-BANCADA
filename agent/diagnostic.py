@@ -9,8 +9,50 @@ from .docs import docs_context_from_case, extract_text_from_bytes, save_case_doc
 from .failures import add_resolved_failure, similar_as_context
 from .llm import call_llm, provider_status
 from .memory import CaseMemory
+from .profile import address_user
 from .research import research_for_case
 from .safety import safety_brief
+
+
+ELECTRONICS_RE = re.compile(
+    r"\b("
+    r"consertar|consert|reparar|defeito|defeituos|medir|medi[cç][aã]o|mult[ií]metro|"
+    r"placa|celular|telem[oó]vel|monitor|fonte|tv\b|televis|n[aã]o\s*liga|nao\s*liga|"
+    r"queimou|curto|diagn[oó]stico|soldar|capacitor|resistor|volta(gem)?|"
+    r"continuidad|ohm|amp[eè]re|fus[ií]vel|ci\b|smd|bancada"
+    r")\b",
+    re.I,
+)
+RESUME_RE = re.compile(
+    r"\b("
+    r"continu|ontem|anteontem|outro\s+dia|mesmo\s+caso|mesma\s+placa|"
+    r"voltar|retomar|retoma|placa\s+de\s+ontem|onde\s+paramos|de\s+onde\s+parei"
+    r")\b",
+    re.I,
+)
+GREETING_RE = re.compile(
+    r"^\s*("
+    r"ol[aá]|oi\b|e\s*a[ií]|hey|bom\s*dia|boa\s*tarde|boa\s*noite|"
+    r"estou\s*aqui|to\s*aqui|tô\s*aqui|presente|salve|fala\b|jarvis\b"
+    r")([\s!,.?]|$)",
+    re.I,
+)
+
+
+def is_electronics_intent(text: str) -> bool:
+    return bool(ELECTRONICS_RE.search(text or ""))
+
+
+def is_resume_intent(text: str) -> bool:
+    return bool(RESUME_RE.search(text or ""))
+
+
+def is_greeting(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) > 80:
+        return False
+    return bool(GREETING_RE.search(t))
+
 
 
 CONFIRM_WORDS = (
@@ -131,6 +173,116 @@ class DiagnosticAgent:
         self.memory.save(case)
         return {"case": case, "bank_entry": entry}
 
+
+    def open_session(self, operator_name: str | None = None) -> dict[str, Any]:
+        """Sessão de chat aberto (sem formulário de placa/sintoma)."""
+        who = operator_name or address_user()
+        case = self.memory.create(
+            board_model="",
+            symptom="",
+            chat_mode="open",
+            operator_name=who,
+        )
+        hour = __import__("datetime").datetime.now().hour
+        greet = "Bom dia" if hour < 12 else ("Boa tarde" if hour < 18 else "Boa noite")
+        msg = (
+            f"{greet}, {who}. Sistemas online. "
+            "Pode falar comigo à vontade — tirar dúvida, bater um papo ou pedir ajuda. "
+            "Quando quiser consertar algo (placa, celular, monitor, fonte…), é só dizer: "
+            "eu entro no Modo Especialista e guio ponta a ponta no multímetro."
+        )
+        spoken = (
+            f"{greet}, {who}. Estou online. Pode falar comigo. "
+            "Quando for hora de consertar, diga o aparelho e o defeito que eu assumo o diagnóstico."
+        )
+        self.memory.add_message(
+            case,
+            "assistant",
+            msg,
+            meta={
+                "phase": "chat",
+                "mode": "chat",
+                "spoken_reply": spoken,
+                "next_action": "chat",
+                "verdict": "pending",
+            },
+        )
+        self.memory.save(case)
+        return {
+            "case": case,
+            "message": msg,
+            "spoken_reply": spoken,
+            "phase": "chat",
+            "mode": "chat",
+            "probe": None,
+            "verdict": "pending",
+            "solution": None,
+            "next_action": "chat",
+        }
+
+    def activate_electronics(
+        self,
+        case: dict[str, Any],
+        user_text: str,
+        *,
+        announce: bool = True,
+    ) -> dict[str, Any]:
+        """Liga Modo Especialista a partir de um chat aberto."""
+        case["chat_mode"] = "electronics"
+        case["status"] = "diagnosing"
+        case["phase"] = "intake"
+        # tenta extrair placa/sintoma da fala
+        try:
+            from .voice import extract_intake_from_speech
+
+            intake = extract_intake_from_speech(user_text)
+            if intake.get("board_model") and not case.get("board_model"):
+                case["board_model"] = intake["board_model"]
+            if intake.get("symptom") and not case.get("symptom"):
+                case["symptom"] = intake["symptom"]
+            # aliases possíveis do extrator
+            if intake.get("board_model") and not case.get("board_model"):
+                case["board_model"] = intake["board_model"]
+            if intake.get("symptom") and not case.get("symptom"):
+                case["symptom"] = intake["symptom"]
+        except Exception:
+            pass
+        if not case.get("symptom") and len(user_text.strip()) > 8:
+            case["symptom"] = user_text.strip()[:200]
+        self.memory.save(case)
+        if announce:
+            board = case.get("board_model") or "o equipamento"
+            note = (
+                f"Modo Especialista em Eletrônica ativado para {board}. "
+                "Vamos no método: foto da placa (se puder) e uma medição por vez. "
+            )
+            case.setdefault("_electronics_announce", note)
+        return case
+
+    def try_resume_case(self, user_text: str) -> dict[str, Any] | None:
+        """Recupera caso recente quando o usuário pede para continuar."""
+        if not is_resume_intent(user_text):
+            return None
+        candidates = self.memory.find_resumable(user_text)
+        # prefer electronics with board/measurements
+        for item in candidates:
+            cid = item.get("case_id")
+            if not cid:
+                continue
+            loaded = self.memory.load(cid)
+            if not loaded:
+                continue
+            if loaded.get("messages"):
+                return loaded
+        # fallback: most recent non-empty
+        for item in self.memory.list_cases():
+            if item.get("status") in {"resolved", "abandoned"}:
+                continue
+            loaded = self.memory.load(item["case_id"])
+            if loaded and loaded.get("messages"):
+                return loaded
+        return None
+
     def handle_user(
         self,
         case: dict[str, Any],
@@ -143,6 +295,45 @@ class DiagnosticAgent:
         if image_name:
             meta["image"] = image_name
         self.memory.add_message(case, "user", user_text, meta=meta or None)
+
+        # Retomar caso anterior ("placa de ontem", "continuando"…)
+        if is_resume_intent(user_text) and case.get("chat_mode") == "open" and not case.get("board_model"):
+            resumed = self.try_resume_case(user_text)
+            if resumed and resumed.get("case_id") != case.get("case_id"):
+                board = resumed.get("board_model") or "placa"
+                symptom = resumed.get("symptom") or "—"
+                msg = (
+                    f"Recuperei o caso **{board}** ({symptom}). "
+                    f"Última atualização: {str(resumed.get('updated_at') or '')[:19]}. "
+                    "Seguimos de onde paramos — me diga a última medição ou mande uma foto nova."
+                )
+                spoken = f"Recuperei o caso {board}. Continuamos de onde paramos."
+                resumed["chat_mode"] = "electronics"
+                self.memory.add_message(
+                    resumed,
+                    "assistant",
+                    msg,
+                    meta={"phase": resumed.get("phase"), "mode": "diagnose", "spoken_reply": spoken},
+                )
+                self.memory.save(resumed)
+                return {
+                    "case": resumed,
+                    "message": msg,
+                    "spoken_reply": spoken,
+                    "phase": resumed.get("phase"),
+                    "mode": "diagnose",
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "next_action": "ask_measurement",
+                    "switched_case_id": resumed["case_id"],
+                }
+
+        # Gatilho: consertar / defeito / medir / placa / celular…
+        if case.get("chat_mode") != "electronics" and (
+            is_electronics_intent(user_text) or image_bytes is not None
+        ):
+            self.activate_electronics(case, user_text, announce=True)
 
         # Confirmação pendente de medição antes do modo solução
         pending = case.get("pending_confirm")
@@ -345,10 +536,22 @@ class DiagnosticAgent:
         case["phase"] = phase
         if update.get("status"):
             case["status"] = update["status"]
+        if update.get("board_model"):
+            case["board_model"] = update["board_model"]
+        if update.get("symptom"):
+            case["symptom"] = update["symptom"]
         if update.get("suspect_components") is not None:
             case["suspect_components"] = update["suspect_components"]
         if update.get("notes"):
             case.setdefault("solution_notes", []).append(update["notes"])
+        # LLM pode pedir troca para electronics via next_action
+        if result.get("next_action") in {"ask_photo", "ask_measurement", "ask_replace"}:
+            case["chat_mode"] = "electronics"
+        # Prefixo de anúncio do modo especialista (uma vez)
+        announce = case.pop("_electronics_announce", None)
+        if announce and not message.startswith("Modo Especialista"):
+            message = announce + message
+            spoken = (announce.split(".")[0] + ". " + spoken).strip()
 
         if verdict in ("ok", "fail") and probe:
             last_user = None
