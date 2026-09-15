@@ -109,9 +109,9 @@ def find_learned_brief(case: dict[str, Any]) -> str:
 ELECTRONICS_RE = re.compile(
     r"\b("
     r"consertar|consert|reparar|defeito|defeituos|medir|medi[cç][aã]o|mult[ií]metro|"
-    r"placa|celular|telem[oó]vel|monitor|fonte|tv\b|televis|n[aã]o\s*liga|nao\s*liga|"
+    r"celular|telem[oó]vel|monitor|fonte|tv\b|televis|n[aã]o\s*liga|nao\s*liga|"
     r"queimou|curto|diagn[oó]stico|soldar|capacitor|resistor|volta(gem)?|"
-    r"continuidad|ohm|amp[eè]re|fus[ií]vel|ci\b|smd|bancada"
+    r"continuidad|ohm|amp[eè]re|fus[ií]vel|ci\b|smd|bancada|especialista"
     r")\b",
     re.I,
 )
@@ -183,7 +183,7 @@ class DiagnosticAgent:
                 f"Início do caso no Modo Mestre Técnico. Modelo: {board_model}. "
                 f"Sintoma: {symptom}. Você já tem pesquisa/memória no contexto. "
                 "Liderança: diga o que pesquisou, o defeito mais comum e proponha o Passo 1 "
-                "(foto da placa) + a 1ª medição se já souber o ponto. "
+                "(foto se ainda não houver; senão 1ª medição objetiva). "
                 f"Aviso breve de segurança: {safety}"
             ),
             research_notes=extra or None,
@@ -389,23 +389,22 @@ class DiagnosticAgent:
             if learned and board:
                 note = (
                     f"**Mestre Técnico.** Nesse tipo ({board}) já rolou solução: {learned}. "
-                    "Foto da placa — confirmo se é o mesmo filme."
+                    "Foto acelera — se tiver, manda; senão seguimos com medição."
                 )
             elif research_hint and board_ok:
                 note = (
                     f"**Mestre Técnico** em {board}. Pista útil: {research_hint}. "
-                    "Manda a foto da área da fonte — Passo 1."
+                    "Próximo passo: foto da fonte (se tiver) ou 1ª medição."
                 )
             elif board_ok:
                 note = (
                     f"**Mestre Técnico.** Alvo: {board}. "
-                    "Foto da placa (fonte/entrada) e eu marco o primeiro ponto."
+                    "Me passa sintoma/modelo ou foto — marco o primeiro ponto."
                 )
             else:
                 note = (
-                    "**Mestre Técnico** no ar. Me diga a **marca/modelo** da placa "
-                    "(não só “equipamento”) e o sintoma — ou manda a foto. "
-                    "Sem modelo concreto eu não pesquiso na web (evita lixo)."
+                    "**Mestre Técnico** no ar. Me diga **marca/modelo** e sintoma. "
+                    "Foto é opcional — acelera, mas não é obrigatória agora."
                 )
             case.setdefault("_electronics_announce", note)
         return case
@@ -569,11 +568,18 @@ class DiagnosticAgent:
                     "switched_case_id": resumed["case_id"],
                 }
 
-        # Gatilho: consertar / defeito / medir / placa / celular…
-        if case.get("chat_mode") != "electronics" and (
-            is_electronics_intent(user_text) or image_bytes is not None
-        ):
-            self.activate_electronics(case, user_text, announce=True)
+        from .intent_router import classify_message
+
+        cls = classify_message(user_text)
+        case["_last_intent"] = cls
+
+        # Gatilho técnico — social/ambient puro NÃO entra em Mestre Técnico
+        if case.get("chat_mode") != "electronics":
+            if image_bytes is not None or (
+                cls.get("is_technical") and not cls.get("blocks_electronics_activation")
+            ):
+                if is_electronics_intent(user_text) or image_bytes is not None or cls.get("is_technical"):
+                    self.activate_electronics(case, user_text, announce=True)
 
         # Confirmação pendente de medição antes do modo solução
         pending = case.get("pending_confirm")
@@ -808,12 +814,19 @@ class DiagnosticAgent:
         # LLM pode pedir troca para electronics via next_action
         if result.get("next_action") in {"ask_photo", "ask_measurement", "ask_replace"}:
             case["chat_mode"] = "electronics"
-        # Prefixo de anúncio do modo Mestre Técnico (uma vez)
+        # Prefixo de anúncio do modo Mestre Técnico (uma vez) — nunca em social/ambient
         announce = case.pop("_electronics_announce", None)
-        if announce and not (
+        last_intent = case.get("_last_intent") or {}
+        skip_announce = bool(
+            last_intent.get("skip_photo_pressure")
+            or result.get("next_action") == "chat"
+            or (result.get("mode") == "chat" and case.get("chat_mode") == "open")
+        )
+        if announce and not skip_announce and not (
             message.startswith("Modo Especialista")
             or message.startswith("**Modo Mestre")
             or "Modo Mestre Técnico" in message[:80]
+            or "foto" in message.lower()[:120]
         ):
             message = announce + message
             spoken = (announce.replace("**", "").split(".")[0] + ". " + spoken).strip()

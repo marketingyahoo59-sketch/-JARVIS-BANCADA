@@ -242,7 +242,7 @@ def build_diagnostic_map(
                 "id": 1,
                 "name": "Análise visual",
                 "goal": "Inspecionar a placa: queima, inchaço, solda fria, cheiro, fusível.",
-                "ask": "Me mande a foto da placa (área da fonte/entrada se possível).",
+                "ask": "Se tiver, mande foto da placa (fonte/entrada). Senão, vamos direto à 1ª medição.",
             },
             {
                 "id": 2,

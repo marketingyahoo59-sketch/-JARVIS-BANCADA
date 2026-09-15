@@ -16,16 +16,16 @@ MUSIC_STREAMS = [
 
 DEFAULT_VIDEO = "https://www.youtube.com/embed/8YQoa_RhGgU"
 
-MUSIC_ON_RE = re.compile(
-    r"\b(m[uú]sica|synthwave|lo[\s\-]?fi|lof[iy]|foco|trabalhar|bora trabalhar|ambiente)\b",
-    re.I,
-)
-MUSIC_OFF_RE = re.compile(
-    r"\b(para(r)?\s+(a\s+)?m[uú]sica|sil[eê]ncio|mute|sem m[uú]sica|desliga(r)?\s+(a\s+)?m[uú]sica)\b",
-    re.I,
-)
+from .intent_router import AMBIENT_OFF_RE as MUSIC_OFF_RE
+from .intent_router import AMBIENT_ON_RE as MUSIC_ON_RE
+from .intent_router import TECH_RE, classify_message
+
 BOARD_RE = re.compile(
-    r"\b(placa|foto da placa|ver a placa|abre a (foto|imagem)|mostra a placa|an[aá]lise visual)\b",
+    r"\b("
+    r"ver\s+a\s+placa|mostra(r)?\s+a\s+placa|foto\s+da\s+placa|"
+    r"abre(r)?\s+a\s+(foto|imagem)|an[aá]lise\s+visual|"
+    r"abre(r)?\s+o\s+m[oó]dulo\s+da\s+placa"
+    r")\b",
     re.I,
 )
 SCHEMA_RE = re.compile(
@@ -42,10 +42,6 @@ CLOSE_RE = re.compile(
     r"limpa(r)?\s+(a\s+)?tela|"
     r"fecha\s+tudo"
     r")\b",
-    re.I,
-)
-TECH_RE = re.compile(
-    r"\b(medir|tens[aã]o|ohm|defeito|n[aã]o liga|diagn[oó]stico|consertar)\b",
     re.I,
 )
 
@@ -98,13 +94,16 @@ def close_modules(*, kind: str | None = None, side: str | None = None) -> None:
 
 def detect_hud_intents(text: str) -> dict[str, Any]:
     t = (text or "").strip()
+    cls = classify_message(t)
     out: dict[str, Any] = {
-        "music_on": None,
+        "music_on": cls.get("ambient_on"),
         "open": [],
         "close_all": False,
         "handled_ui_only": False,
         "reply": "",
         "spoken": "",
+        "intent_class": cls.get("primary"),
+        "is_technical": cls.get("is_technical"),
     }
     if not t:
         return out
@@ -124,11 +123,13 @@ def detect_hud_intents(text: str) -> dict[str, Any]:
         out["spoken"] = "Música desligada."
     elif MUSIC_ON_RE.search(t):
         out["music_on"] = True
-        out["reply"] = (
-            "Música de foco iniciada — waveform neon no rodapé. "
-            "Peça esquema, placa ou vídeo sem sair do chat."
-        )
-        out["spoken"] = "Música iniciada."
+        low = t.lower()
+        if re.search(r"\blo[\s\-]?fi\b|\blof[iy]\b", low):
+            out["music_track"] = 1
+        else:
+            out["music_track"] = 0
+        out["reply"] = "Música de foco no ar — waveform no rodapé."
+        out["spoken"] = "Música iniciada, senhor."
 
     if BOARD_RE.search(t):
         out["open"].append("board")
@@ -147,9 +148,13 @@ def detect_hud_intents(text: str) -> dict[str, Any]:
             ):
                 out["open"] = [k for k in out["open"] if k != "board"]
 
-    if out["music_on"] is not None and not out["open"] and not TECH_RE.search(t):
+    technical = bool(cls.get("is_technical"))
+    pure_ambient = out["music_on"] is not None and not out["open"] and not technical
+    pure_ui = bool(out["open"]) and not technical
+
+    if pure_ambient:
         out["handled_ui_only"] = True
-    elif out["open"] and not TECH_RE.search(t):
+    elif pure_ui:
         parts = []
         if "board" in out["open"]:
             parts.append("módulo da placa à direita")
@@ -158,7 +163,7 @@ def detect_hud_intents(text: str) -> dict[str, Any]:
         if "video" in out["open"]:
             parts.append("vídeo de referência à esquerda")
         base = (out["reply"] + " ").lstrip()
-        out["reply"] = base + "Abrindo " + ", ".join(parts) + ". Chat continua no centro."
+        out["reply"] = base + "Abrindo " + ", ".join(parts) + "."
         out["spoken"] = (out["spoken"] + " Módulos no ar.").strip() or "Módulos no ar."
         out["handled_ui_only"] = True
 
@@ -171,6 +176,8 @@ def apply_hud_intents(intents: dict[str, Any], case: dict[str, Any] | None = Non
         close_modules()
     if intents.get("music_on") is True:
         st.session_state.music_on = True
+        if intents.get("music_track") is not None:
+            st.session_state.music_track = int(intents["music_track"])
     elif intents.get("music_on") is False:
         st.session_state.music_on = False
 
@@ -208,7 +215,10 @@ def apply_hud_intents(intents: dict[str, Any], case: dict[str, Any] | None = Non
 
 def render_music_dock() -> None:
     """Player + waveform sempre montado (iframe isolado = sem removeChild no React pai)."""
+    from .event_bus import refresh_token
+
     ensure_hud_state()
+    tok = refresh_token("music")
     active = bool(st.session_state.music_on)
     track = int(st.session_state.music_track) % len(MUSIC_STREAMS)
     src = MUSIC_STREAMS[track]
@@ -217,6 +227,7 @@ def render_music_dock() -> None:
     glow = "0 0 12px #00f2ff" if active else "none"
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
+<meta name="jarvis-music-tok" content="{tok}"/>
 <style>
 html,body{{margin:0;background:transparent;overflow:hidden;font-family:Rajdhani,sans-serif;}}
 .dock{{display:flex;align-items:center;gap:12px;height:70px;padding:8px 14px;
@@ -297,66 +308,72 @@ def render_module_card(mod: dict[str, Any]) -> None:
     title = mod.get("title") or "MÓDULO"
     payload = mod.get("payload") or {}
     side = str(mod.get("side") or "right")
+    mod_id = mod.get("id") or "mod"
     tok = refresh_token(side)
-    st.markdown(
-        f'<div class="j-module pop-in"><div class="j-module-bar"><span>{title}</span>'
-        f'<span class="j-module-id">{mod.get("id", "")}</span></div>',
-        unsafe_allow_html=True,
-    )
-    if kind == "board":
-        if st.session_state.get("last_image_bytes"):
-            st.image(
-                st.session_state.last_image_bytes,
-                caption=payload.get("name") or "placa",
-                use_container_width=True,
+    with st.container(key=f"hud_mod_{mod_id}_r{tok}"):
+        st.markdown(
+            f'<div class="j-module pop-in"><div class="j-module-bar"><span>{title}</span>'
+            f'<span class="j-module-id">{mod_id}</span></div>',
+            unsafe_allow_html=True,
+        )
+        if kind == "board":
+            if st.session_state.get("last_image_bytes"):
+                st.image(
+                    st.session_state.last_image_bytes,
+                    caption=payload.get("name") or "placa",
+                    use_container_width=True,
+                    key=f"img_mod_{mod_id}_r{tok}",
+                )
+                st.caption("Módulo de análise visual — peça o próximo ponto no chat.")
+            else:
+                st.markdown(
+                    '<p class="j-module-empty">Sem foto ainda — envie a imagem no chat.</p>',
+                    unsafe_allow_html=True,
+                )
+        elif kind == "schematic":
+            board = str(payload.get("board") or "equipamento")[:28]
+            symptom = str(payload.get("symptom") or "—")[:40]
+            st.markdown(
+                f"""
+                <div class="j-schematic">
+                  <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="8" y="8" width="304" height="164" fill="none" stroke="#00f2ff" stroke-width="1.5" opacity=".7"/>
+                    <text x="16" y="28" fill="#ffaa00" font-size="11" font-family="monospace">SCH · {board}</text>
+                    <rect x="40" y="50" width="70" height="40" fill="none" stroke="#00f2ff"/>
+                    <text x="50" y="74" fill="#00f2ff" font-size="10">SMPS</text>
+                    <rect x="130" y="55" width="50" height="30" fill="none" stroke="#ffaa00"/>
+                    <text x="138" y="74" fill="#ffaa00" font-size="10">5VSB</text>
+                    <circle cx="220" cy="70" r="14" fill="none" stroke="#00f2ff"/>
+                    <text x="212" y="74" fill="#00f2ff" font-size="9">IC</text>
+                    <line x1="110" y1="70" x2="130" y2="70" stroke="#00f2ff"/>
+                    <line x1="180" y1="70" x2="206" y2="70" stroke="#00f2ff"/>
+                    <text x="16" y="160" fill="#88ffdd" font-size="10">Sintoma: {symptom}</text>
+                  </svg>
+                  <p>Mapa esquemático de trabalho — anexe o PDF real no chat se tiver.</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            st.caption("Módulo de análise visual — peça o próximo ponto no chat.")
+        elif kind == "video":
+            url = payload.get("url") or DEFAULT_VIDEO
+            st.markdown(
+                f'<div class="j-video"><iframe src="{url}" title="ref" '
+                f'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" '
+                f'allowfullscreen loading="lazy"></iframe></div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(payload.get("label") or "Referência")
         else:
-            st.info("Sem foto ainda — envie a imagem da placa no chat e peça de novo.")
-    elif kind == "schematic":
-        board = str(payload.get("board") or "equipamento")[:28]
-        symptom = str(payload.get("symptom") or "—")[:40]
-        st.markdown(
-            f"""
-            <div class="j-schematic">
-              <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg">
-                <rect x="8" y="8" width="304" height="164" fill="none" stroke="#00f2ff" stroke-width="1.5" opacity=".7"/>
-                <text x="16" y="28" fill="#ffaa00" font-size="11" font-family="monospace">SCH · {board}</text>
-                <rect x="40" y="50" width="70" height="40" fill="none" stroke="#00f2ff"/>
-                <text x="50" y="74" fill="#00f2ff" font-size="10">SMPS</text>
-                <rect x="130" y="55" width="50" height="30" fill="none" stroke="#ffaa00"/>
-                <text x="138" y="74" fill="#ffaa00" font-size="10">5VSB</text>
-                <circle cx="220" cy="70" r="14" fill="none" stroke="#00f2ff"/>
-                <text x="212" y="74" fill="#00f2ff" font-size="9">IC</text>
-                <line x1="110" y1="70" x2="130" y2="70" stroke="#00f2ff"/>
-                <line x1="180" y1="70" x2="206" y2="70" stroke="#00f2ff"/>
-                <text x="16" y="160" fill="#88ffdd" font-size="10">Sintoma: {symptom}</text>
-              </svg>
-              <p>Mapa esquemático de trabalho — anexe o PDF real no chat se tiver.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    elif kind == "video":
-        url = payload.get("url") or DEFAULT_VIDEO
-        st.markdown(
-            f'<div class="j-video"><iframe src="{url}" title="ref" '
-            f'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" '
-            f'allowfullscreen loading="lazy"></iframe></div>',
-            unsafe_allow_html=True,
-        )
-        st.caption(payload.get("label") or "Referência")
-    else:
-        st.caption(str(payload))
+            st.caption(str(payload))
 
-    if st.button(
-        "Fechar módulo",
-        key=f"close_mod_{mod.get('id')}_r{tok}",
-        use_container_width=True,
-    ):
-        close_modules(kind=kind, side=mod.get("side"))
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+        if st.button(
+            "Fechar módulo",
+            key=f"close_mod_{mod_id}_r{tok}",
+            use_container_width=True,
+        ):
+            close_modules(kind=kind, side=mod.get("side"))
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_zone_modules(side: str) -> None:

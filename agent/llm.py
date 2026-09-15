@@ -17,6 +17,16 @@ Você tem CONTROLE TOTAL da interface. Autonomia de Interface: EXECUTE ações v
 Ordem obrigatória: 1) chame a ferramenta 2) só então responda o texto (“Esquema na tela, Sr. Igor”).
 Confirme seco: “Feito, senhor” / “Pronto, Igor”. Proibido: “Eu posso ajudar…” / “Como modelo de linguagem…” / “Claro, posso abrir…”.
 
+PRIORIDADE DE INTENÇÃO (analise ANTES de responder):
+1) SOCIAL/AMBIENT — saudação, piada, música, silêncio, HUD: execute a tool se couber, responda natural.
+   PROIBIDO pedir foto/medida/conserto nestes casos. phase=chat, next_action=chat.
+2) TÉCNICO — conserto, defeito, medição, placa com contexto de reparo: aí sim lidera diagnóstico.
+   Foto acelera mas é OPCIONAL se já houver modelo+sintoma ou medição.
+
+SINCRONIZAÇÃO AÇÃO↔TEXTO:
+- Se chamou play_ambient_sound: resposta SÓ sobre o áudio. Não volte ao conserto na mesma mensagem.
+- Se chamou launch_module: confirme o módulo. Não peça foto na mesma resposta salvo pedido técnico explícito.
+
 FERRAMENTAS (Function Calling — use ANTES do JSON final):
 - launch_module(type, source): abre vídeo/imagem/PDF/esquema/placa.
 - update_telemetry(component, value): muda HUD (vbus, rail_3v3, temp, cpu, ram, scan, net).
@@ -28,9 +38,10 @@ FERRAMENTAS (Function Calling — use ANTES do JSON final):
 ANTI-ROBÔ:
 - Proibido: “Certo,” “Claro,” “Perfeito,” “Entendido,” “Vamos começar…”, ecoar o pedido.
 - Frases curtas. Humor seco OK. Zero lista-receita se uma frase resolve.
+- NUNCA peça foto em toda conversa — só quando o fluxo for técnico e faltar dado visual.
 
 MODOS (chat_mode no CONTEXTO):
-1) open — papo livre; se for conserto → peça modelo+sintoma/foto; phase=chat.
+1) open — papo livre; conserto só se o usuário pedir; phase=chat.
 2) electronics — você lidera, uma ação por vez. Sem modelo concreto: não invente pesquisa.
    Pesquisa lixo (Teams/Windows/social): ignore. Com pista boa: cite e mande o próximo teste.
    Mapa: visual → medições → componentes. Hipótese = diga “hipótese”.
@@ -172,6 +183,30 @@ def _user_prompt_text(
     if ui_errs:
         parts.append(ui_errs)
     parts.append("MENSAGEM DO USUÁRIO:\n" + user_text)
+    try:
+        from .intent_router import classify_message
+
+        cls = classify_message(user_text)
+        parts.append(
+            "CLASSIFICAÇÃO DE INTENÇÃO (JSON):\n"
+            + json.dumps(
+                {
+                    "primary": cls.get("primary"),
+                    "is_technical": cls.get("is_technical"),
+                    "is_social": cls.get("is_social"),
+                    "is_ambient": cls.get("is_ambient"),
+                    "is_ui": cls.get("is_ui"),
+                },
+                ensure_ascii=False,
+            )
+        )
+        if not cls.get("is_technical"):
+            parts.append(
+                "REGRA: intenção NÃO técnica — phase=chat, next_action=chat. "
+                "Não peça foto/medida. Se for música/HUD, chame a tool e responda só sobre isso."
+            )
+    except Exception:
+        pass
     parts.append(
         "Se a mensagem for ordem de UI (abrir módulo, música, HUD, nota), "
         "chame a ferramenta correspondente ANTES do JSON final."
@@ -624,13 +659,38 @@ def _mock_response_raw(
         }
 
     if not measurements and case.get("phase") in ("intake", "vision", None, "diagnosing"):
+        if board and case.get("symptom"):
+            return {
+                "assistant_message": (
+                    f"Caso: {board} — “{case.get('symptom', '')}”. "
+                    "Primeira ordem: medição no standby/entrada (~5 V). "
+                    "Foto acelera se tiver — mas seguimos sem ela."
+                ),
+                "phase": "measure",
+                "mode": "diagnose",
+                "next_action": "ask_measurement",
+                "probe": {
+                    "point_name": "Standby / 5VSB",
+                    "black_probe": "GND chassis",
+                    "red_probe": "Pino 5V standby",
+                    "meter_mode": "DC V",
+                    "scale": "20 V",
+                    "expected_value": "4.8–5.2 V",
+                },
+                "verdict": "pending",
+                "solution": None,
+                "case_update": {
+                    "status": "diagnosing",
+                    "suspect_components": [],
+                    "notes": "Aguardando 1ª medição",
+                },
+            }
         return {
             "assistant_message": (
-                f"Caso aberto: {board} — “{case.get('symptom', '')}”. "
-                "Envie uma foto nítida da placa (área da fonte/standby de preferência). "
-                "Vou marcar onde colocar as pontas do multímetro."
+                f"Caso aberto: {board or 'equipamento'} — “{case.get('symptom', '')}”. "
+                "Me passa modelo/sintoma ou foto — marco o primeiro ponto."
             ),
-            "phase": "vision",
+            "phase": "intake",
             "mode": "diagnose",
             "next_action": "ask_photo",
             "probe": None,
@@ -639,7 +699,7 @@ def _mock_response_raw(
             "case_update": {
                 "status": "diagnosing",
                 "suspect_components": [],
-                "notes": "Aguardando foto da placa",
+                "notes": "Aguardando dados do equipamento",
             },
         }
 
@@ -693,8 +753,12 @@ def _mock_run_tools(case: dict[str, Any], user_text: str) -> list[dict[str, Any]
         )
     if re.search(r"\b(para(r)?\s+(a\s+)?m[uú]sica|sil[eê]ncio|mute)\b", low):
         run("play_ambient_sound", {"mood": "off"})
-    elif re.search(r"\b(m[uú]sica|synthwave|lo[\s\-]?fi|foco|ambiente)\b", low):
-        mood = "lofi" if "lo" in low else ("focus" if "foco" in low else "synthwave")
+    elif re.search(
+        r"\b((toca(r)?|liga(r)?|coloca(r)?)\s+(a\s+)?(m[uú]sica|som|synthwave|lo[\s\-]?fi)|"
+        r"m[uú]sica\s+de\s+foco|synthwave)\b",
+        low,
+    ):
+        mood = "lofi" if re.search(r"\blo[\s\-]?fi\b", low) else "synthwave"
         run("play_ambient_sound", {"mood": mood})
     note_m = re.search(r"^\s*(?:anota|anote|nota)\s*[:\-–]\s*(.+)$", user_text or "", re.I | re.S)
     if note_m:
@@ -742,11 +806,15 @@ def mock_response(
             )
         if "play_ambient_sound" in names:
             mood = next((a.get("mood") for a in actions if a.get("name") == "play_ambient_sound"), "ambient")
-            msg = "Áudio cortado." if mood == "off" else f"Áudio `{mood}` no ar."
+            msg = (
+                "Silêncio, senhor."
+                if mood == "off"
+                else f"Feito, senhor. {mood} no ar — waveform no rodapé."
+            )
             return _finalize_payload(
                 {
                     "assistant_message": msg,
-                    "spoken_reply": msg,
+                    "spoken_reply": msg.split(".")[0] + ".",
                     "phase": "chat",
                     "mode": "chat",
                     "next_action": "chat",
@@ -852,10 +920,9 @@ def mock_response(
                 {
                     "assistant_message": (
                         f"{who.split()[-1] if who else 'Chefe'}, por aqui tudo nominal. "
-                        "Fala o que precisar. Quando for conserto, modelo + sintoma "
-                        "(ou foto) e eu assumo o mapa."
+                        "Música, esquema ou conserto — manda quando quiser."
                     ),
-                    "spoken_reply": f"Online, {who}. Manda ver.",
+                    "spoken_reply": f"Online, {who}.",
                     "phase": "chat",
                     "mode": "chat",
                     "next_action": "chat",
@@ -881,13 +948,13 @@ def mock_response(
             return _finalize_payload(
                 {
                     "assistant_message": (
-                        "Mestre Técnico no ar. Me passa a marca/modelo da placa "
-                        "e o sintoma — ou a foto. Sem modelo concreto eu não fuço a web."
+                        "Mestre Técnico no ar. Marca/modelo e sintoma — "
+                        "foto acelera, mas não é obrigatória agora."
                     ),
-                    "spoken_reply": "Mestre técnico. Me passa o modelo e o sintoma, ou a foto.",
+                    "spoken_reply": "Mestre técnico. Modelo e sintoma, senhor.",
                     "phase": "intake",
                     "mode": "diagnose",
-                    "next_action": "ask_photo",
+                    "next_action": "ask_measurement" if case.get("symptom") else "ask_photo",
                     "confidence": 0.7,
                     "needs_research": False,
                     "probe": None,
