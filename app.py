@@ -29,6 +29,8 @@ from agent.hud_modules import (
     render_music_dock,
     render_zone_modules,
 )
+from agent.self_heal import mount_self_heal_bridge, render_heal_panel
+from agent.agent_tools import format_actions_for_user
 from agent.voice import extract_intake_from_speech, speak_text, transcribe_audio
 
 st.set_page_config(
@@ -681,6 +683,10 @@ def ensure_session() -> None:
         "hud_modules": [],
         "music_on": False,
         "music_track": 0,
+        "hud_overrides": {},
+        "ui_errors": [],
+        "ui_heal_log": [],
+        "agent_actions": [],
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -919,6 +925,12 @@ def submit_user_turn(
         st.info("Aguardando confirmação da medição.")
     if result.get("safety_brief"):
         st.caption(f"🛡️ {result['safety_brief']}")
+    actions = result.get("agent_actions") or []
+    if actions:
+        st.session_state.agent_actions = actions[-20:]
+        note = format_actions_for_user(actions)
+        if note:
+            st.caption(f"⚙️ {note}")
     play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
     st.rerun()
 
@@ -1124,23 +1136,29 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
 
     with right:
         render_zone_modules("right")
-        # Painel holográfico de telemetria da placa (valores oscilam a cada rerun)
+        # Painel holográfico — prioriza valores do agente (update_hud), senão oscila.
         board_lbl = board if board and board != "—" else "AGUARDANDO MODELO"
+        ov = dict(st.session_state.get("hud_overrides") or {})
+        vbus = ov.get("vbus") or f"{random.uniform(11.6, 12.5):.1f}"
+        rail = ov.get("rail_3v3") or f"{random.uniform(3.25, 3.38):.2f}"
+        temp = ov.get("temp") or str(random.randint(32, 48))
+        net = ov.get("net") or str(random.randint(1, 9))
         st.markdown(
             f"""
             <div class="j-panel">
               <h3>Telemetria da placa</h3>
               <div class="j-rings">
-                <div class="j-ring"><b>{random.uniform(11.6,12.5):.1f}</b><span>VBUS</span></div>
-                <div class="j-ring"><b>{random.uniform(3.25,3.38):.2f}</b><span>3V3</span></div>
-                <div class="j-ring"><b>{random.randint(32,48)}</b><span>°C</span></div>
-                <div class="j-ring"><b>{random.randint(1,9)}</b><span>NET</span></div>
+                <div class="j-ring"><b>{vbus}</b><span>VBUS</span></div>
+                <div class="j-ring"><b>{rail}</b><span>3V3</span></div>
+                <div class="j-ring"><b>{temp}</b><span>°C</span></div>
+                <div class="j-ring"><b>{net}</b><span>NET</span></div>
               </div>
               <p class="j-tech-tip">MODELO · {board_lbl}<br/>SINTOMA · {symptom}<br/>SCANNER · ANALISANDO BANCADA</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        render_heal_panel()
         dm = case.get("diagnostic_map")
         if dm and mode == "electronics":
             st.markdown('<div class="j-panel"><h3>Mapa de diagnóstico</h3>', unsafe_allow_html=True)
@@ -1842,6 +1860,8 @@ def case_view(ag: DiagnosticAgent) -> None:
 
 def main() -> None:
     ensure_session()
+    # Self-heal: captura erros JS e injeta em session_state (sempre montado).
+    mount_self_heal_bridge()
     inject_hud()
     ag = get_agent()
     nav = top_menu()

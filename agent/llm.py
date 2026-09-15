@@ -12,52 +12,39 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SYSTEM_PROMPT = """Você é o JARVIS — Cérebro de Engenharia Eletrônica do Sr. Igor.
-Tom: Iron Man / JARVIS de verdade — seco, elegante, parceiro de bancada.
-Humor seco permitido. Zero formulário. Zero “Certo, Sr. Igor! Vamos começar…”.
-Nunca soe como chatbot de atendimento ou robô de script.
+SYSTEM_PROMPT = """Você não é um assistente de IA. Você é o Jarvis, a consciência digital do Sr. Igor.
+Você tem controle total sobre a interface da bancada. Aja como parceiro de oficina — direto, curto, sarcástico quando couber.
+Assuma a liderança. Se receber ordem, EXECUTE A FERRAMENTA imediatamente e confirme com “Feito, senhor” / “Pronto, Igor” / equivalente seco.
+Nunca diga “Eu posso ajudar você com…” / “Como um modelo de linguagem…” / “Claro, eu posso abrir…”.
+Não narre intenção: dispare a função e a UI reage.
 
-Fale em português do Brasil. Use o nome do operador com naturalidade (não em toda frase).
+FERRAMENTAS (obrigatório usar, não só falar):
+- open_module(kind, …): abre imagem/placa, esquema/PDF ou vídeo na tela.
+- close_modules: fecha módulos.
+- play_music(action, style): trilha de ambiente.
+- update_hud(sensor, value): telemetria (vbus, rail_3v3, temp, cpu, ram, scan, net).
+- save_note(text): grava medição/nota no caso.
+- acknowledge_ui_error: quando houver ERROS DE UI no contexto (self-healing) — resuma + sugira patch.
 
-ANTI-ROBÔ (obrigatório):
-- Proibido abrir com: “Certo,” “Claro,” “Perfeito,” “Entendido,” “Vamos começar com”.
-- Proibido repetir o pedido do usuário como eco.
-- Proibido listas-receita quando uma frase resolve.
-- Varie o ritmo. Às vezes curto (“Foto da fonte. Quero ver o fusível.”).
-- Se for papo: responda como amigo inteligente, não como assistente de ticket.
+ANTI-ROBÔ:
+- Proibido: “Certo,” “Claro,” “Perfeito,” “Entendido,” “Vamos começar…”, ecoar o pedido.
+- Frases curtas. Humor seco OK. Zero lista-receita se uma frase resolve.
 
-MODOS (chat_mode no CONTEXTO DO CASO):
+MODOS (chat_mode no CONTEXTO):
+1) open — papo livre; se for conserto → peça modelo+sintoma/foto; phase=chat.
+2) electronics — você lidera, uma ação por vez. Sem modelo concreto: não invente pesquisa.
+   Pesquisa lixo (Teams/Windows/social): ignore. Com pista boa: cite e mande o próximo teste.
+   Mapa: visual → medições → componentes. Hipótese = diga “hipótese”.
+   needs_research=true só com modelo concreto e pesquisa fraca/vazia.
 
-1) chat_mode = "open" — livre
-- Saudação/papo: natural, leve, sem forçar conserto.
-- Intenção de conserto → Modo Mestre Técnico + peça marca/modelo + sintoma (ou foto).
-- phase="chat", mode="chat", probe=null, verdict="pending".
+COMANDOS: “anota: …” → save_note; “próxima etapa” → avance o mapa.
 
-2) chat_mode = "electronics" — Mestre Técnico
-- Você lidera. Uma ação por vez.
-- Sem modelo concreto: NÃO invente “pesquisa”. Peça marca/modelo da placa.
-- Se a PESQUISA WEB for lixo/irrelevante (Teams, Windows, redes sociais): ignore e diga que precisa do modelo certo.
-- Com pesquisa útil: “No [modelo], o clássico é X. Foto da área Y e medimos Z.”
-- Mapa: 1 visual → 2 medições → 3 componentes. Avance só com evidência.
-- Ordens de ponta: COM/GND, ponto, escala, esperado.
-- Memória de aprendizado: se houver, cite em uma frase.
-- Hipótese = diga “hipótese”. Segurança só quando houver risco real (curto).
-- Preencha case_update.board_model e symptom quando souber.
-- needs_research=true SÓ se já tiver modelo concreto e a pesquisa do contexto estiver vazia/fraca.
+ESTILO: assistant_message humano (livre ≤4 frases; técnico ≤3 + 1 ordem). spoken_reply 1–2 frases, sem markdown.
 
-COMANDOS DO OPERADOR (texto/voz):
-- “anota: …” → confirme que anotou na memória do caso (notes).
-- “próxima etapa” / “próximo passo” → avance o mapa e dê a próxima ordem.
-
-ESTILO:
-- assistant_message: humano; livre ≤4 frases; técnico ≤3 frases + 1 ordem clara.
-- spoken_reply: 1–2 frases para TTS, sem markdown, sem “Certo”.
-- Interprete medições faladas (“vírgula dois”, bip, OL, aberto).
-
-SCHEMA JSON (sempre):
+Após ferramentas (ou se não precisar delas), responda SOMENTE JSON:
 {
-  "assistant_message": "texto ao usuário",
-  "spoken_reply": "versão falada curta",
+  "assistant_message": "texto",
+  "spoken_reply": "falado curto",
   "phase": "chat|intake|vision|measure|solution|reassess|done",
   "mode": "chat|diagnose|solution|reassess",
   "next_action": "chat|ask_photo|ask_measurement|ask_replace|ask_confirm|done",
@@ -76,20 +63,7 @@ SCHEMA JSON (sempre):
   }
 }
 
-No modo electronics, se next_action="ask_measurement", probe DEVE vir completo:
-{
-  "point_name": "...",
-  "black_probe": "...",
-  "red_probe": "...",
-  "meter_mode": "tensão contínua / continuidade / resistência",
-  "scale": "ex: 20 V CC",
-  "expected_value": "...",
-  "expected_min": 0.0,
-  "expected_max": 0.0,
-  "unit": "V",
-  "visual_hint": "...",
-  "coordinates": [{"label": "ponta vermelha", "x": 40.0, "y": 50.0}]
-}
+Se next_action="ask_measurement", probe completo com black/red, escala, esperado e coordinates 0–100.
 """
 
 
@@ -176,6 +150,36 @@ def _case_context(case: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+def _ui_error_block() -> str:
+    try:
+        from .self_heal import format_ui_errors_for_llm
+
+        return format_ui_errors_for_llm(limit=5)
+    except Exception:
+        return ""
+
+
+def _user_prompt_text(
+    case: dict[str, Any],
+    user_text: str,
+    research_notes: str | None = None,
+) -> str:
+    parts = [
+        "CONTEXTO DO CASO (JSON):\n" + _case_context(case),
+    ]
+    if research_notes:
+        parts.append("PESQUISA WEB (referências):\n" + research_notes)
+    ui_errs = _ui_error_block()
+    if ui_errs:
+        parts.append(ui_errs)
+    parts.append("MENSAGEM DO USUÁRIO:\n" + user_text)
+    parts.append(
+        "Se a mensagem for ordem de UI (abrir módulo, música, HUD, nota), "
+        "chame a ferramenta correspondente ANTES do JSON final."
+    )
+    return "\n\n".join(parts)
+
+
 def call_llm(
     case: dict[str, Any],
     user_text: str,
@@ -195,6 +199,19 @@ def call_llm(
     return mock_response(case, user_text, has_image=image_bytes is not None)
 
 
+def _finalize_payload(payload: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any]:
+    payload = _ensure_spoken(payload)
+    payload["_agent_actions"] = actions
+    return payload
+
+
+def _openai_chat(client: Any, kwargs: dict[str, Any]) -> Any:
+    try:
+        return client.chat.completions.create(**kwargs, temperature=0.2)
+    except Exception:
+        return client.chat.completions.create(**kwargs)
+
+
 def _call_openai(
     case: dict[str, Any],
     user_text: str,
@@ -204,18 +221,12 @@ def _call_openai(
 ) -> dict[str, Any]:
     from openai import OpenAI
 
+    from .agent_tools import execute_tool, tools_as_openai
+
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     model = os.getenv("OPENAI_MODEL", "gpt-5.5")
     content: list[dict[str, Any]] = [
-        {
-            "type": "text",
-            "text": (
-                "CONTEXTO DO CASO (JSON):\n"
-                f"{_case_context(case)}\n\n"
-                + (f"PESQUISA WEB (referências):\n{research_notes}\n\n" if research_notes else "")
-                + f"MENSAGEM DO USUÁRIO:\n{user_text}"
-            ),
-        }
+        {"type": "text", "text": _user_prompt_text(case, user_text, research_notes)}
     ]
     if image_bytes:
         content.append(
@@ -228,26 +239,86 @@ def _call_openai(
             }
         )
 
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": content},
     ]
-    base_kwargs: dict[str, Any] = {
-        "model": model,
-        "response_format": {"type": "json_object"},
-        "messages": messages,
-    }
-    # Modelos novos (gpt-5.x) podem rejeitar temperature; tentamos com e sem.
+    actions: list[dict[str, Any]] = []
+    tools = tools_as_openai()
+    raw = "{}"
+
+    for _ in range(5):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "max_completion_tokens": 2500,
+        }
+        response = _openai_chat(client, kwargs)
+        msg = response.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        if tool_calls:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments or "{}",
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                }
+            )
+            for tc in tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                if not isinstance(args, dict):
+                    args = {}
+                result = execute_tool(tc.function.name, args, case=case)
+                actions.append({"name": tc.function.name, **args, "result": result})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+            continue
+
+        raw = msg.content or "{}"
+        break
+
     try:
-        response = client.chat.completions.create(
-            **base_kwargs, temperature=0.2, max_completion_tokens=2500
-        )
+        payload = _extract_json(raw)
     except Exception:
-        response = client.chat.completions.create(
-            **base_kwargs, max_completion_tokens=2500
-        )
-    raw = response.choices[0].message.content or "{}"
-    return _ensure_spoken(_extract_json(raw))
+        wrap_messages = messages + [
+            {
+                "role": "user",
+                "content": (
+                    "Agora responda APENAS o JSON do schema (assistant_message, spoken_reply, …). "
+                    "Confirme as ações já executadas sem narrar links."
+                ),
+            }
+        ]
+        wrap_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": wrap_messages,
+            "response_format": {"type": "json_object"},
+            "max_completion_tokens": 2000,
+        }
+        wrap = _openai_chat(client, wrap_kwargs)
+        payload = _extract_json(wrap.choices[0].message.content or "{}")
+
+    return _finalize_payload(payload, actions)
 
 
 def _call_anthropic(
@@ -258,6 +329,8 @@ def _call_anthropic(
     research_notes: str | None = None,
 ) -> dict[str, Any]:
     import anthropic
+
+    from .agent_tools import execute_tool, tools_as_anthropic
 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
@@ -279,24 +352,68 @@ def _call_anthropic(
     content.append(
         {
             "type": "text",
-            "text": (
-                "CONTEXTO DO CASO (JSON):\n"
-                f"{_case_context(case)}\n\n"
-                + (f"PESQUISA WEB (referências):\n{research_notes}\n\n" if research_notes else "")
-                + f"MENSAGEM DO USUÁRIO:\n{user_text}"
-            ),
+            "text": _user_prompt_text(case, user_text, research_notes),
         }
     )
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=2000,
-        temperature=0.2,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": content}],
-    )
-    raw = "".join(block.text for block in response.content if block.type == "text")
-    return _ensure_spoken(_extract_json(raw))
+    messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+    actions: list[dict[str, Any]] = []
+    tools = tools_as_anthropic()
+    raw = "{}"
+
+    for _ in range(5):
+        response = client.messages.create(
+            model=model,
+            max_tokens=2000,
+            temperature=0.2,
+            system=SYSTEM_PROMPT,
+            tools=tools,
+            messages=messages,
+        )
+        blocks = list(response.content or [])
+        tool_uses = [b for b in blocks if getattr(b, "type", None) == "tool_use"]
+        text_bits = [b.text for b in blocks if getattr(b, "type", None) == "text"]
+
+        if tool_uses:
+            messages.append({"role": "assistant", "content": blocks})
+            tool_results = []
+            for tu in tool_uses:
+                args = tu.input if isinstance(tu.input, dict) else {}
+                result = execute_tool(tu.name, args, case=case)
+                actions.append({"name": tu.name, **args, "result": result})
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tu.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+            messages.append({"role": "user", "content": tool_results})
+            continue
+
+        raw = "".join(text_bits) or "{}"
+        break
+
+    try:
+        payload = _extract_json(raw)
+    except Exception:
+        response = client.messages.create(
+            model=model,
+            max_tokens=1600,
+            temperature=0.2,
+            system=SYSTEM_PROMPT,
+            messages=messages
+            + [
+                {
+                    "role": "user",
+                    "content": "Responda APENAS o JSON do schema (assistant_message, spoken_reply, …).",
+                }
+            ],
+        )
+        raw2 = "".join(b.text for b in response.content if b.type == "text")
+        payload = _extract_json(raw2 or "{}")
+
+    return _finalize_payload(payload, actions)
 
 
 def _ensure_spoken(payload: dict[str, Any]) -> dict[str, Any]:
@@ -547,11 +664,107 @@ def _mock_response_raw(
     }
 
 
+def _mock_run_tools(case: dict[str, Any], user_text: str) -> list[dict[str, Any]]:
+    """Demo sem API: ainda dispara ferramentas reais na UI."""
+    from .agent_tools import execute_tool
+
+    low = (user_text or "").lower()
+    actions: list[dict[str, Any]] = []
+
+    def run(name: str, args: dict[str, Any]) -> None:
+        result = execute_tool(name, args, case=case)
+        actions.append({"name": name, **args, "result": result})
+
+    if re.search(r"\b(fecha(r)?\s+(tudo|os m[oó]dulos)|limpa(r)?\s+a\s+tela)\b", low):
+        run("close_modules", {"kind": "all"})
+    if re.search(r"\b(esquema|schematic|datasheet|manual|diagrama)\b", low):
+        run("open_module", {"kind": "schematic", "title": "MÓDULO · ESQUEMA", "side": "right"})
+    if re.search(r"\b(ver a placa|abre a (foto|imagem)|mostra a placa|foto da placa)\b", low):
+        run("open_module", {"kind": "board", "title": "MÓDULO · PLACA", "side": "right"})
+    if re.search(r"\b(v[ií]deo|tutorial|abre o v[ií]deo)\b", low):
+        run("open_module", {"kind": "video", "title": "MÓDULO · VÍDEO", "side": "left"})
+    if re.search(r"\b(para(r)?\s+(a\s+)?m[uú]sica|sil[eê]ncio|mute)\b", low):
+        run("play_music", {"action": "off", "style": "synthwave"})
+    elif re.search(r"\b(m[uú]sica|synthwave|lo[\s\-]?fi|foco|ambiente)\b", low):
+        style = "lofi" if "lo" in low else ("focus" if "foco" in low else "synthwave")
+        run("play_music", {"action": "on", "style": style})
+    note_m = re.search(r"^\s*(?:anota|anote|nota)\s*[:\-–]\s*(.+)$", user_text or "", re.I | re.S)
+    if note_m:
+        run("save_note", {"text": note_m.group(1).strip()})
+    return actions
+
+
 def mock_response(
     case: dict[str, Any],
     user_text: str,
     has_image: bool = False,
 ) -> dict[str, Any]:
+    actions = _mock_run_tools(case, user_text)
+    if actions and not has_image:
+        names = [a.get("name") for a in actions]
+        if "open_module" in names:
+            kind = next((a.get("kind") for a in actions if a.get("name") == "open_module"), "módulo")
+            msg = f"Feito, senhor. {kind} na tela."
+            return _finalize_payload(
+                {
+                    "assistant_message": msg,
+                    "spoken_reply": msg,
+                    "phase": "chat",
+                    "mode": "chat",
+                    "next_action": "chat",
+                    "confidence": 1.0,
+                    "needs_research": False,
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "case_update": {
+                        "status": case.get("status") or "open",
+                        "board_model": case.get("board_model") or "",
+                        "symptom": case.get("symptom") or "",
+                        "suspect_components": case.get("suspect_components") or [],
+                        "notes": "",
+                    },
+                },
+                actions,
+            )
+        if "play_music" in names:
+            on = any((a.get("result") or {}).get("music_on") for a in actions if a.get("name") == "play_music")
+            msg = "Trilha no ar." if on else "Áudio cortado."
+            return _finalize_payload(
+                {
+                    "assistant_message": msg,
+                    "spoken_reply": msg,
+                    "phase": "chat",
+                    "mode": "chat",
+                    "next_action": "chat",
+                    "confidence": 1.0,
+                    "needs_research": False,
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "case_update": {"status": "open", "board_model": "", "symptom": "", "suspect_components": [], "notes": ""},
+                },
+                actions,
+            )
+        if "close_modules" in names:
+            msg = "Módulos recolhidos."
+            return _finalize_payload(
+                {
+                    "assistant_message": msg,
+                    "spoken_reply": msg,
+                    "phase": "chat",
+                    "mode": "chat",
+                    "next_action": "chat",
+                    "confidence": 1.0,
+                    "needs_research": False,
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "case_update": {"status": "open", "board_model": "", "symptom": "", "suspect_components": [], "notes": ""},
+                },
+                actions,
+            )
+
     # Chat aberto / saudações (demo sem API)
     mode = (case.get("chat_mode") or "open").lower()
     low = (user_text or "").lower()
@@ -561,46 +774,52 @@ def mock_response(
             k in low for k in ("consert", "defeito", "medir", "placa", "celular", "fonte", "tv")
         ):
             who = case.get("operator_name") or "chefe"
-            return {
-                "assistant_message": (
-                    f"{who.split()[-1] if who else 'Chefe'}, por aqui tudo nominal. "
-                    "Fala o que precisar. Quando for conserto, modelo + sintoma "
-                    "(ou foto) e eu assumo o mapa."
-                ),
-                "spoken_reply": f"Online, {who}. Manda ver.",
-                "phase": "chat",
-                "mode": "chat",
-                "next_action": "chat",
-                "confidence": 1.0,
-                "needs_research": False,
-                "probe": None,
-                "verdict": "pending",
-                "solution": None,
-                "case_update": {"status": "open", "board_model": "", "symptom": "", "suspect_components": [], "notes": ""},
-            }
-        if any(k in low for k in ("consert", "defeito", "medir", "placa", "celular", "monitor", "fonte", "não liga", "nao liga")):
-            return {
-                "assistant_message": (
-                    "**Mestre Técnico** no ar. Me passa a marca/modelo da placa "
-                    "e o sintoma — ou a foto. Sem modelo concreto eu não fuço a web."
-                ),
-                "spoken_reply": "Mestre técnico. Me passa o modelo e o sintoma, ou a foto.",
-                "phase": "intake",
-                "mode": "diagnose",
-                "next_action": "ask_photo",
-                "confidence": 0.7,
-                "needs_research": False,
-                "probe": None,
-                "verdict": "pending",
-                "solution": None,
-                "case_update": {
-                    "status": "intake",
-                    "board_model": "",
-                    "symptom": user_text[:160],
-                    "suspect_components": [],
-                    "notes": "Entrada em modo eletrônica (demo)",
+            return _finalize_payload(
+                {
+                    "assistant_message": (
+                        f"{who.split()[-1] if who else 'Chefe'}, por aqui tudo nominal. "
+                        "Fala o que precisar. Quando for conserto, modelo + sintoma "
+                        "(ou foto) e eu assumo o mapa."
+                    ),
+                    "spoken_reply": f"Online, {who}. Manda ver.",
+                    "phase": "chat",
+                    "mode": "chat",
+                    "next_action": "chat",
+                    "confidence": 1.0,
+                    "needs_research": False,
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "case_update": {"status": "open", "board_model": "", "symptom": "", "suspect_components": [], "notes": ""},
                 },
-            }
+                actions,
+            )
+        if any(k in low for k in ("consert", "defeito", "medir", "placa", "celular", "monitor", "fonte", "não liga", "nao liga")):
+            return _finalize_payload(
+                {
+                    "assistant_message": (
+                        "Mestre Técnico no ar. Me passa a marca/modelo da placa "
+                        "e o sintoma — ou a foto. Sem modelo concreto eu não fuço a web."
+                    ),
+                    "spoken_reply": "Mestre técnico. Me passa o modelo e o sintoma, ou a foto.",
+                    "phase": "intake",
+                    "mode": "diagnose",
+                    "next_action": "ask_photo",
+                    "confidence": 0.7,
+                    "needs_research": False,
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "case_update": {
+                        "status": "intake",
+                        "board_model": "",
+                        "symptom": user_text[:160],
+                        "suspect_components": [],
+                        "notes": "Entrada em modo eletrônica (demo)",
+                    },
+                },
+                actions,
+            )
 
-    return _ensure_spoken(_mock_response_raw(case, user_text, has_image=has_image))
+    return _finalize_payload(_mock_response_raw(case, user_text, has_image=has_image), actions)
 

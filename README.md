@@ -15,6 +15,8 @@ Guia: **[deploy/CLOUDRUN.md](deploy/CLOUDRUN.md)**
 6. **Memória** — SQLite + fotos no **bucket GCS** (`GCS_BUCKET`).
 7. **Visão**, falhas, PDF, segurança, TTS (edge), PWA, HUD.
 8. **Voz estável** — mic via `st.audio_input` (iframe contínuo removido: corrigia o crash `removeChild`).
+9. **Agente com Function Calling** — a IA dispara ferramentas reais (`open_module`, `play_music`, `update_hud`, `save_note`…) e a UI reage na hora (não só texto).
+10. **Self-heal** — captura erros JS (`window.onerror`), manda ao Jarvis e sugere patch em ambiente de desenvolvimento.
 
 ## Local
 

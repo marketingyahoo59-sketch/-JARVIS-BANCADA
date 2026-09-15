@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      (function () {
+        function sendMessage(type, data) {
+          var msg = Object.assign({ isStreamlitMessage: true, type: type }, data || {});
+          window.parent.postMessage(msg, "*");
+        }
+        function setComponentValue(value) {
+          sendMessage("streamlit:setComponentValue", { value: value });
+        }
+        function setFrameHeight(height) {
+          sendMessage("streamlit:setFrameHeight", { height: height });
+        }
+        function componentReady() {
+          sendMessage("streamlit:componentReady", { apiVersion: 1 });
+        }
+
+        var KEY = "jarvis_ui_errors_queue";
+
+        function pushError(err) {
+          try {
+            var w = window.parent;
+            var prev = JSON.parse(w.sessionStorage.getItem(KEY) || "[]");
+            prev.push(err);
+            w.sessionStorage.setItem(KEY, JSON.stringify(prev.slice(-30)));
+          } catch (e) {}
+        }
+
+        function bind(target) {
+          if (!target || target.__jarvisHealBound) return;
+          target.__jarvisHealBound = true;
+          target.addEventListener(
+            "error",
+            function (e) {
+              pushError({
+                message: String(e.message || "error"),
+                source: String(e.filename || ""),
+                line: e.lineno || 0,
+                col: e.colno || 0,
+                type: "error",
+                at: new Date().toISOString(),
+              });
+            },
+            true
+          );
+          target.addEventListener("unhandledrejection", function (e) {
+            var reason = e.reason;
+            pushError({
+              message: String(
+                reason && reason.message ? reason.message : reason || "rejection"
+              ),
+              type: "unhandledrejection",
+              at: new Date().toISOString(),
+            });
+          });
+        }
+
+        try {
+          bind(window.parent);
+        } catch (e) {}
+        bind(window);
+
+        function flush() {
+          try {
+            var raw = window.parent.sessionStorage.getItem(KEY) || "[]";
+            var items = JSON.parse(raw);
+            if (items && items.length) {
+              window.parent.sessionStorage.setItem(KEY, "[]");
+              setComponentValue(JSON.stringify(items));
+            }
+          } catch (e) {}
+        }
+
+        componentReady();
+        setFrameHeight(0);
+        flush();
+        setInterval(flush, 5000);
+      })();
+    </script>
+  </body>
+</html>

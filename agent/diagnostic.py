@@ -864,33 +864,29 @@ class DiagnosticAgent:
                 }
             )
 
+        agent_actions = result.get("_agent_actions") or []
+        meta = {
+            "phase": phase,
+            "mode": mode,
+            "probe": probe,
+            "verdict": verdict,
+            "solution": solution,
+            "next_action": result.get("next_action"),
+            "spoken_reply": spoken,
+            "agent_actions": agent_actions,
+        }
+
         if user_visible or not case.get("messages"):
             self.memory.add_message(
                 case,
                 "assistant",
                 message,
-                meta={
-                    "phase": phase,
-                    "mode": mode,
-                    "probe": probe,
-                    "verdict": verdict,
-                    "solution": solution,
-                    "next_action": result.get("next_action"),
-                    "spoken_reply": spoken,
-                },
+                meta=meta,
             )
         else:
             if case.get("messages") and case["messages"][-1]["role"] == "assistant":
                 case["messages"][-1]["content"] = message
-                case["messages"][-1]["meta"] = {
-                    "phase": phase,
-                    "mode": mode,
-                    "probe": probe,
-                    "verdict": verdict,
-                    "solution": solution,
-                    "next_action": result.get("next_action"),
-                    "spoken_reply": spoken,
-                }
+                case["messages"][-1]["meta"] = meta
             self.memory.save(case)
 
         self.memory.save(case)
@@ -905,4 +901,5 @@ class DiagnosticAgent:
             "solution": solution,
             "next_action": result.get("next_action"),
             "diagnostic_map": case.get("diagnostic_map"),
+            "agent_actions": agent_actions,
         }
