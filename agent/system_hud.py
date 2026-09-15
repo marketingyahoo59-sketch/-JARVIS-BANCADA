@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 
 
-SENSOR_DIR = Path(__file__).resolve().parent.parent / "data" / "sensors"
+from .paths import SENSORS_DIR as SENSOR_DIR, ensure_data_dirs
+
+ensure_data_dirs()
 SENSOR_DIR.mkdir(parents=True, exist_ok=True)
 REMOTE_SENSOR = SENSOR_DIR / "pc_local.json"
 

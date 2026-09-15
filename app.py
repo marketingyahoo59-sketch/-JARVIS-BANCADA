@@ -30,8 +30,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-DATA_DIR = Path(__file__).resolve().parent / "data" / "cases"
-UPLOAD_DIR = Path(__file__).resolve().parent / "data" / "uploads"
+from agent.paths import CASES_DIR as DATA_DIR, UPLOADS_DIR as UPLOAD_DIR, ensure_data_dirs
+
+ensure_data_dirs()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 STATUS_PT = {
@@ -458,8 +459,9 @@ def play_agent_voice(text: str) -> None:
     st.session_state.agent_speaking = True
     try:
         audio = speak_text(text)
-        st.session_state.last_tts_bytes = audio
-        st.session_state.tts_autoplay = True
+        if audio:
+            st.session_state.last_tts_bytes = audio
+            st.session_state.tts_autoplay = True
     except Exception as exc:  # noqa: BLE001
         st.warning(f"Voz indisponível: {exc}")
     finally:

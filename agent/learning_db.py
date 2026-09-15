@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "brain" / "learning.db"
+from .paths import LEARNING_DB as DB_PATH, ensure_data_dirs
+
+ensure_data_dirs()
 
 
 def _connect() -> sqlite3.Connection:

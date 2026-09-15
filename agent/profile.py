@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 
-PROFILE_PATH = Path(__file__).resolve().parent.parent / "data" / "profile.json"
+from .paths import PROFILE_PATH, ensure_data_dirs
+
+ensure_data_dirs()
 
 DEFAULT_PROFILE: dict[str, Any] = {
     "display_name": "Sr. Igor",

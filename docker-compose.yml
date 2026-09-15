@@ -1,0 +1,18 @@
+# Opcional: VPS / PC local com disco permanente
+services:
+  jarvis:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      JARVIS_DATA_DIR: /data
+      JARVIS_TTS: edge
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      LLM_PROVIDER: openai
+    volumes:
+      - jarvis_data:/data
+    restart: unless-stopped
+
+volumes:
+  jarvis_data:

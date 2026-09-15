@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 
-CASES_DIR = Path(__file__).resolve().parent.parent / "data" / "cases"
+from .paths import CASES_DIR, ensure_data_dirs
+
+ensure_data_dirs()
 
 
 class CaseMemory:

@@ -51,10 +51,10 @@ def _search_batch(queries: list[str], max_results: int = 6) -> list[str]:
         return out
 
     try:
-        # Timeout duro — no Render a busca pode travar o spinner “sincronizando…”.
+        # Timeout curto — resposta rápida na bancada (Railway/VPS/local).
         with ThreadPoolExecutor(max_workers=1) as pool:
             fut = pool.submit(_run)
-            snippets = fut.result(timeout=12)
+            snippets = fut.result(timeout=6)
     except FuturesTimeout:
         return ["(pesquisa web demorou demais — sigo com conhecimento técnico)"]
     except Exception as exc:  # noqa: BLE001
@@ -94,12 +94,12 @@ def research_device_deep(
     if cache_key in _RESEARCH_CACHE:
         return _RESEARCH_CACHE[cache_key]
 
+    # Poucas queries = menos latência (1ª resposta mais rápida).
     queries = [
-        f"{device} service manual schematic PDF",
-        f"{device} {sym} defeito comum".strip(),
-        f"{device} esquema elétrico OR power board failure",
+        f"{device} {sym} defeito comum repair".strip(),
+        f"{device} service manual schematic",
     ]
-    snippets = _search_batch(queries, max_results=max_results)
+    snippets = _search_batch(queries, max_results=min(max_results, 4))
     if not snippets:
         result = "(nenhum manual/esquema/defeito comum encontrado ainda)"
     else:

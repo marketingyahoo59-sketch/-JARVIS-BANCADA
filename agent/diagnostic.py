@@ -27,11 +27,15 @@ def _brain_context(case: dict[str, Any], user_text: str = "", *, force_research:
     parts: list[str] = []
 
     research = ""
-    if force_research or board or case.get("chat_mode") == "electronics":
+    # Só pesquisa web quando pedido (force_research). Cache local não bloqueia o chat.
+    if force_research:
         research = research_for_case(case, user_text)
         if research:
             case["last_research"] = research[:4000]
-            parts.append(research)
+    elif case.get("last_research"):
+        research = str(case.get("last_research") or "")
+    if research:
+        parts.append(research)
 
     learned = learned_as_context(board, symptom)
     if learned:

@@ -43,18 +43,27 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> str:
 
 
 def speak_text(text: str, voice: str | None = None) -> bytes:
-    """Gera MP3. Tenta OpenAI TTS; se falhar, usa edge-tts (fallback)."""
+    """Gera MP3. JARVIS_TTS=edge|openai|off (padrão edge = mais rápido)."""
     clean = _for_speech(text)
+    prefer = (os.getenv("JARVIS_TTS") or "edge").strip().lower()
+    if prefer in {"off", "0", "false", "no"}:
+        return b""
+    if prefer == "openai":
+        try:
+            return _speak_openai(clean, voice=voice)
+        except Exception:
+            return _speak_edge(clean)
     try:
-        return _speak_openai(clean, voice=voice)
+        return _speak_edge(clean)
     except Exception:
         try:
-            return _speak_edge(clean)
+            return _speak_openai(clean, voice=voice)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
-                "TTS indisponível (OpenAI e fallback). "
+                "TTS indisponível (edge e OpenAI). "
                 f"Detalhe: {exc}"
             ) from exc
+
 
 
 def _speak_openai(clean: str, voice: str | None = None) -> bytes:

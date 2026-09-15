@@ -1,30 +1,29 @@
 # JARVIS de Bancada
 
-Cérebro de Engenharia Eletrônica (Streamlit): personalidade Jarvis livre + Modo Mestre Técnico — pesquisa manuais/esquemas, monta mapa de diagnóstico e aprende com seus consertos.
+Cérebro de Engenharia Eletrônica (Streamlit): Jarvis livre + Modo Mestre Técnico — pesquisa, mapa de diagnóstico e aprendizado com seus consertos.
 
-**Online:** https://jarvis-bancada.onrender.com/
+**Online (Render Free — pode dormir):** https://jarvis-bancada.onrender.com/
+
+**Recomendado para bancada real:** [Railway com Volume](deploy/RAILWAY.md) — resposta rápida + SQLite/fotos permanentes.
 
 ## O que faz
 
-1. **Personalidade livre** — conversa normal, piadas, parceiro de bancada.
-2. **Modo Mestre Técnico** — ao detectar conserto, assume a liderança do diagnóstico.
-3. **Pesquisa ativa** — manuais, esquemas elétricos e defeitos comuns na web.
-4. **Mapa de diagnóstico** — (1) visual → (2) medições básicas → (3) componentes.
-5. **Memória de aprendizado (SQLite)** — casos resolvidos em `data/brain/learning.db`; em aparelhos repetidos sugere o que já funcionou.
-6. **Visão** — marca pontas do multímetro na foto + zoom.
-7. **Banco de falhas (JSON)** — espelho local além do SQLite.
-8. **Esquema/PDF**, checklist de segurança, TTS, PWA, HUD.
-
-Também: escuta contínua (Web Speech), Whisper, chat aberto sem formulário.
+1. **Personalidade livre** — conversa, piadas, parceiro de bancada.
+2. **Modo Mestre Técnico** — lidera o conserto quando detecta diagnóstico.
+3. **Pesquisa ativa** — manuais/esquemas/defeitos (só quando precisa; timeout 6s).
+4. **Mapa de diagnóstico** — visual → medições → componentes.
+5. **Memória SQLite** — `data/brain/learning.db` (Railway: volume `/data`).
+6. **Visão**, falhas JSON, PDF, segurança, TTS rápido (edge), PWA, HUD.
 
 ## Instalação
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# OPENAI_API_KEY ou ANTHROPIC_API_KEY
+# OPENAI_API_KEY=...
+# JARVIS_TTS=edge
 ```
 
 ## Executar
@@ -33,60 +32,30 @@ cp .env.example .env
 streamlit run app.py --server.port 3847 --server.address 0.0.0.0
 ```
 
-Abra http://127.0.0.1:3847
+http://127.0.0.1:3847
 
-Sem API key sobe em **modo demo**.
+## Deploy rápido (Railway)
 
-### Temperatura real do PC (bancada)
+Guia: **[deploy/RAILWAY.md](deploy/RAILWAY.md)**
 
-No **Windows da oficina**:
+1. Deploy do GitHub no Railway (Dockerfile).
+2. Vars: `OPENAI_API_KEY`, `JARVIS_DATA_DIR=/data`, `JARVIS_TTS=edge`, `OPENAI_MODEL=gpt-4o-mini`.
+3. **Volume** em `/data` (obrigatório para não perder aprendizado).
+4. Push em `main` atualiza; o volume permanece.
 
-```bash
-python scripts/sensor_local.py
-```
+## Por que o Render Free trava
 
-Deixe rodando e abra o JARVIS **no mesmo PC**. Em **Sistemas** aparece CPU/RAM/temp locais.
-
-No site Render as % são do **servidor**, não do seu PC.
-
-## Testes rápidos
-
-```bash
-.venv/bin/python scripts/test_features.py
-```
-
-## Keep-alive (anti-sleep Render Free)
-
-Workflow: `.github/workflows/keep-alive.yml` (cron `*/5`).  
-No GitHub: **Actions → Enable workflows** se estiver desativado.  
-Opcional: UptimeRobot a cada 5 min no mesmo URL.
-
-## Riscos
-
-- Render Free pode dormir se o ping falhar (cold start 30–60s).
-- GPT-5.5 consome créditos da API.
-- Temperatura no cloud ≠ PC da bancada.
-- Não compartilhe a chave API.
-- Alta tensão: EPI e isolamento são sua responsabilidade.
+- Cold start ~30s (dorme).
+- Disco efêmero (perde DB/fotos).
+- Pouca RAM para voz/visão.
 
 ## Estrutura
 
 ```
 app.py
-agent/           # diagnostic, llm, memory, vision, voice, docs, failures, safety, profile, system_hud
-static/          # PWA
-data/cases/      # histórico
-scripts/sensor_local.py
-scripts/test_features.py
-.github/workflows/keep-alive.yml
+agent/            # diagnostic, llm, memory, learning_db, paths…
+data/             # local; produção = volume /data
+deploy/RAILWAY.md
+Dockerfile
+railway.toml
 ```
-
-## Deploy automático (Render)
-
-O serviço **https://jarvis-bancada.onrender.com/** está ligado ao GitHub
-`marketingyahoo59-sketch/-JARVIS-BANCADA` com **Auto-Deploy**.
-
-Cada `bash scripts/push-github.sh` (ou push para `main`) atualiza o site sozinho.
-Keep-alive: GitHub Action a cada 5 min (`.github/workflows/keep-alive.yml`).
-
-Opcional: coloque `RENDER_API_KEY` no `.env` para forçar deploy via API além do auto-deploy.

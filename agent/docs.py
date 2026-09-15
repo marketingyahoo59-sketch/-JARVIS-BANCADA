@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 
-DOCS_DIR = Path(__file__).resolve().parent.parent / "data" / "docs"
+from .paths import DOCS_DIR, ensure_data_dirs
+
+ensure_data_dirs()
 
 
 def save_case_doc(case_id: str, filename: str, data: bytes) -> Path:

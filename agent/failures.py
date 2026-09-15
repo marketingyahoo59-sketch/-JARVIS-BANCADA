@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 
-BANK_DIR = Path(__file__).resolve().parent.parent / "data" / "failures"
+from .paths import FAILURES_DIR as BANK_DIR, ensure_data_dirs
+
+ensure_data_dirs()
 BANK_PATH = BANK_DIR / "bank.json"
 
 
