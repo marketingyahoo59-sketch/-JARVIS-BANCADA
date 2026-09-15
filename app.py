@@ -5,8 +5,10 @@ Diagnóstico eletrônico com voz, visão, pesquisa e memória.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import random
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -54,6 +56,10 @@ PHASE_PT = {
     "done": "concluído",
 }
 VERDICT_PT = {"ok": "OK", "fail": "FALHOU", "pending": "pendente", "unknown": "indefinido"}
+
+# WAV silencioso — slot de áudio SEMPRE montado (evita removeChild ao criar/destruir st.audio).
+_SILENT_WAV = base64.b64decode("UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==")
+
 
 HUD_CSS = """
 <style>
@@ -512,12 +518,19 @@ def inject_hud() -> None:
         '<link rel="manifest" href="/app/static/manifest.json" />',
         unsafe_allow_html=True,
     )
-    # Overlay holográfico fixo (pointer-events:none — não quebra cliques).
-    v = random.uniform(11.7, 12.4)
-    hz = random.randint(48, 62)
-    ma = random.uniform(0.12, 0.48)
-    tmp = random.uniform(28.0, 41.0)
-    scan = random.choice(["SYNC", "PROBE", "MAP", "IDLE"])
+    # Overlay estável: valores cacheados ~3s (HTML com mesma estrutura a cada rerun).
+    now = time.time()
+    telem = st.session_state.get("_hud_telem")
+    if not telem or now - float(st.session_state.get("_hud_telem_at") or 0) > 3.0:
+        telem = {
+            "v": round(random.uniform(11.7, 12.4), 2),
+            "hz": random.randint(48, 62),
+            "ma": round(random.uniform(0.12, 0.48), 2),
+            "tmp": round(random.uniform(28.0, 41.0), 1),
+            "scan": random.choice(["SYNC", "PROBE", "MAP", "IDLE"]),
+        }
+        st.session_state._hud_telem = telem
+        st.session_state._hud_telem_at = now
     st.markdown(
         f"""
         <div class="hud-overlay" aria-hidden="true">
@@ -541,13 +554,13 @@ def inject_hud() -> None:
             <div class="hud-ring-core"></div>
           </div>
           <div class="hud-side-rail left">
-            <div class="hud-telem glow"><b>RAIL 12V</b><span>{v:.2f} V</span></div>
-            <div class="hud-telem"><b>FREQ</b><span>{hz} kHz</span></div>
-            <div class="hud-telem"><b>I-SENSE</b><span>{ma:.2f} A</span></div>
+            <div class="hud-telem glow"><b>RAIL 12V</b><span>{telem['v']:.2f} V</span></div>
+            <div class="hud-telem"><b>FREQ</b><span>{telem['hz']} kHz</span></div>
+            <div class="hud-telem"><b>I-SENSE</b><span>{telem['ma']:.2f} A</span></div>
           </div>
           <div class="hud-side-rail right">
-            <div class="hud-telem"><b>BOARD ΔT</b><span>{tmp:.1f} °C</span></div>
-            <div class="hud-telem warn"><b>SCAN</b><span>{scan}</span></div>
+            <div class="hud-telem"><b>BOARD ΔT</b><span>{telem['tmp']:.1f} °C</span></div>
+            <div class="hud-telem warn"><b>SCAN</b><span>{telem['scan']}</span></div>
             <div class="hud-telem"><b>PESQUISA</b><span>LIVE</span></div>
           </div>
         </div>
@@ -1055,16 +1068,14 @@ def mount_listen_slot() -> str | None:
 
 
 def render_audio_slot() -> None:
-    """Player sempre presente no DOM — evita removeChild ao criar/destruir st.audio."""
-    audio = st.session_state.get("last_tts_bytes")
+    """Player SEMPRE montado com o mesmo widget — nunca troca st.audio ↔ caption."""
+    audio = st.session_state.get("last_tts_bytes") or _SILENT_WAV
+    fmt = "audio/mp3" if st.session_state.get("last_tts_bytes") else "audio/wav"
     autoplay = bool(st.session_state.pop("tts_autoplay", False))
-    if audio:
-        try:
-            st.audio(audio, format="audio/mp3", autoplay=autoplay)
-        except TypeError:
-            st.audio(audio, format="audio/mp3")
-    else:
-        st.caption("Canal de áudio pronto.")
+    try:
+        st.audio(audio, format=fmt, autoplay=autoplay)
+    except TypeError:
+        st.audio(audio, format=fmt)
 
 
 def consume_continuous_voice(key: str | None = None) -> str | None:
@@ -1089,36 +1100,45 @@ def compact_controls() -> None:
     with c1:
         st.session_state.voice_out = st.toggle("JARVIS fala", value=st.session_state.voice_out)
     with c2:
-        # Escuta contínua via iframe removida — causa crash React removeChild no Cloud Run.
+        # Toggle só controla se processamos o áudio — o widget FICA sempre montado.
         st.session_state.listen_on = st.toggle(
             "Mic rápido",
             value=st.session_state.listen_on,
-            help="Abre gravação estável (sem iframe). A escuta contínua antiga travava a UI.",
+            help="Gravação nativa do Streamlit (widget sempre no DOM — evita removeChild).",
         )
     with c3:
         st.session_state.safety_ack = st.toggle("Segurança OK", value=st.session_state.safety_ack)
-    if st.session_state.listen_on:
-        st.caption("Fale no microfone abaixo e envie — sem iframe, sem trava.")
-        mic = st.audio_input("Falar com o JARVIS", key="jarvis_mic_fast")
-        if mic is not None:
-            digest = hashlib.sha1(mic.getvalue()).hexdigest()
-            if digest != st.session_state.last_manual_audio_hash:
-                st.session_state.last_manual_audio_hash = digest
-                st.session_state.voice_status = "processing"
-                st.session_state.agent_speaking = True
-                with st.spinner("Transcrevendo…"):
-                    try:
-                        transcript = transcribe_audio(
-                            mic.getvalue(), filename=mic.name or "fala.wav"
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        st.session_state.agent_speaking = False
-                        st.session_state.voice_status = "idle"
-                        st.error(f"Áudio: {exc}")
-                        st.stop()
-                if transcript and transcript.strip():
-                    st.session_state._pending_voice = transcript.strip()
-                    st.rerun()
+
+    # CRÍTICO: st.audio_input SEMPRE no mesmo lugar do DOM (ligado ou não).
+    # Montar/desmontar conforme o toggle causava NotFoundError: removeChild no React.
+    st.caption(
+        "Mic pronto — grave e envie." if st.session_state.listen_on
+        else "Mic em espera (ligue Mic rápido para enviar a gravação)."
+    )
+    mic = st.audio_input("Falar com o JARVIS", key="jarvis_mic_fast")
+    if st.session_state.listen_on and mic is not None:
+        digest = hashlib.sha1(mic.getvalue()).hexdigest()
+        if digest != st.session_state.last_manual_audio_hash:
+            st.session_state.last_manual_audio_hash = digest
+            st.session_state.voice_status = "processing"
+            st.session_state.agent_speaking = True
+            with st.spinner("Transcrevendo…"):
+                try:
+                    transcript = transcribe_audio(
+                        mic.getvalue(), filename=mic.name or "fala.wav"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    st.session_state.agent_speaking = False
+                    st.session_state.voice_status = "idle"
+                    st.error(f"Áudio: {exc}")
+                    st.stop()
+            if transcript and transcript.strip():
+                st.session_state._pending_voice = transcript.strip()
+                st.rerun()
+    elif st.session_state.listen_on:
+        st.session_state.voice_status = "listening"
+    elif st.session_state.voice_status == "listening":
+        st.session_state.voice_status = "idle"
 
 
 
