@@ -344,7 +344,7 @@ def ensure_session() -> None:
         "last_image_name": None,
         "last_tts_bytes": None,
         "voice_out": True,
-        "listen_on": True,
+        "listen_on": False,
         "last_voice_hash": "",
         "agent_speaking": False,
         "voice_status": "idle",
@@ -511,7 +511,10 @@ def submit_user_turn(
     image_mime: str = "image/jpeg",
 ) -> None:
     st.session_state.case_id = case["case_id"]
+    # Pausa o microfone ANTES do spinner — evita erro React removeChild
+    # e impede nova fala enquanto a IA pensa.
     st.session_state.voice_status = "processing"
+    st.session_state.agent_speaking = True
     with st.spinner("JARVIS sincronizando…"):
         try:
             result = ag.handle_user(
@@ -522,7 +525,8 @@ def submit_user_turn(
                 image_mime=image_mime,
             )
         except Exception as exc:  # noqa: BLE001
-            st.session_state.voice_status = "listening"
+            st.session_state.agent_speaking = False
+            st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
             st.error(f"Falha de enlace com a IA: {exc}")
             st.stop()
     # Retomada pode trocar o case_id
@@ -781,13 +785,24 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
 def consume_continuous_voice(key: str) -> str | None:
     if not st.session_state.listen_on:
         return None
-    st.session_state.voice_status = (
-        "speaking" if st.session_state.agent_speaking else "listening"
+    busy = (
+        st.session_state.agent_speaking
+        or st.session_state.get("voice_status") == "processing"
     )
+    # Enquanto processa, mantém o iframe montado mas pausado (evita removeChild).
+    if busy:
+        continuous_listen(
+            active=True,
+            paused=True,
+            agent_speaking=True,
+            key=key,
+        )
+        return None
+    st.session_state.voice_status = "listening"
     transcript = continuous_listen(
         active=True,
-        paused=bool(st.session_state.agent_speaking),
-        agent_speaking=bool(st.session_state.agent_speaking),
+        paused=False,
+        agent_speaking=False,
         key=key,
     )
     if not transcript:
@@ -797,6 +812,7 @@ def consume_continuous_voice(key: str) -> str | None:
         return None
     st.session_state.last_voice_hash = digest
     st.session_state.voice_status = "processing"
+    st.session_state.agent_speaking = True
     return transcript
 
 

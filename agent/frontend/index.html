@@ -112,6 +112,14 @@
         const clean = (text || "").trim();
         if (!clean || clean === lastSent) return;
         lastSent = clean;
+        // Para o microfone imediatamente — evita remount/removeChild no Streamlit
+        // enquanto o backend fica em “JARVIS sincronizando…”.
+        agentSpeaking = true;
+        if (recognition) {
+          try { recognition.onend = null; recognition.stop(); } catch (e) {}
+          recognition = null;
+        }
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
         setUI("wait", "Ouvi sua frase. Enviando ao agente…");
         Streamlit.setComponentValue({ transcript: clean, ts: Date.now(), status: "processing" });
       }

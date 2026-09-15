@@ -477,27 +477,27 @@ class DiagnosticAgent:
         lowered = user_text.lower()
         needs_from_llm = bool(case.get("_needs_research"))
         case["_needs_research"] = False
+        # Pesquisa web é cara/lenta no Render — só na 1ª vez, se pedir, ou se o LLM pediu.
+        ask_research = any(
+            k in lowered
+            for k in (
+                "esquema",
+                "datasheet",
+                "pesquisa",
+                "manual",
+                "procura",
+                "busca",
+                "defeito comum",
+            )
+        )
         should_research = (
-            case.get("chat_mode") == "electronics"
-            or needs_from_llm
-            or bool(case.get("board_model"))
-            or any(
-                k in lowered
-                for k in (
-                    "?",
-                    "o que é",
-                    "por que",
-                    "porque",
-                    "esquema",
-                    "datasheet",
-                    "pesquisa",
-                    "manual",
-                    "não sei",
-                    "nao sei",
-                    "procura",
-                    "busca",
-                    "defeito comum",
-                )
+            needs_from_llm
+            or ask_research
+            or (bool(case.get("board_model")) and not case.get("last_research"))
+            or (
+                case.get("chat_mode") == "electronics"
+                and not case.get("last_research")
+                and bool(case.get("board_model") or case.get("symptom"))
             )
         )
         extra = _brain_context(case, user_text, force_research=should_research)

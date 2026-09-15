@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any
+
+# Cache simples em memória do processo (evita 7 buscas a cada frase).
+_RESEARCH_CACHE: dict[str, str] = {}
 
 
 def _ddgs():
@@ -23,7 +27,8 @@ def _search_batch(queries: list[str], max_results: int = 6) -> list[str]:
     except Exception:
         return ["(biblioteca de busca indisponível)"]
 
-    try:
+    def _run() -> list[str]:
+        out: list[str] = []
         with DDGS() as ddgs:
             for q in queries:
                 try:
@@ -39,10 +44,19 @@ def _search_batch(queries: list[str], max_results: int = 6) -> list[str]:
                     if not body and not title:
                         continue
                     line = f"- {title}: {body}" + (f" ({href})" if href else "")
-                    if line not in snippets:
-                        snippets.append(line)
-                if len(snippets) >= max_results:
+                    if line not in out:
+                        out.append(line)
+                if len(out) >= max_results:
                     break
+        return out
+
+    try:
+        # Timeout duro — no Render a busca pode travar o spinner “sincronizando…”.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_run)
+            snippets = fut.result(timeout=12)
+    except FuturesTimeout:
+        return ["(pesquisa web demorou demais — sigo com conhecimento técnico)"]
     except Exception as exc:  # noqa: BLE001
         return [f"(pesquisa indisponível: {exc})"]
     return snippets[:max_results]
@@ -68,7 +82,7 @@ def research_device_deep(
     board_model: str,
     symptom: str = "",
     *,
-    max_results: int = 8,
+    max_results: int = 5,
 ) -> str:
     """Pesquisa ativa: manuais, esquemas elétricos e defeitos comuns do aparelho."""
     device = (board_model or "").strip()
@@ -76,38 +90,38 @@ def research_device_deep(
     if not device and not sym:
         return ""
 
-    base = f"{device} {sym}".strip()
+    cache_key = f"deep::{device.lower()}::{sym.lower()}"
+    if cache_key in _RESEARCH_CACHE:
+        return _RESEARCH_CACHE[cache_key]
+
     queries = [
-        f"{device} manual serviço PDF",
-        f"{device} service manual schematic",
-        f"{device} esquema elétrico diagrama",
-        f"{device} {sym} defeito comum",
-        f"{device} common failure repair",
-        f"{base} fonte SMPS não liga",
-        f"{device} datasheet power board",
+        f"{device} service manual schematic PDF",
+        f"{device} {sym} defeito comum".strip(),
+        f"{device} esquema elétrico OR power board failure",
     ]
     snippets = _search_batch(queries, max_results=max_results)
     if not snippets:
-        return "(nenhum manual/esquema/defeito comum encontrado ainda)"
-
-    header = (
-        "PESQUISA ATIVA NA WEB (manuais / esquemas / defeitos comuns):\n"
-        f"Alvo: {device or '—'} | Sintoma: {sym or '—'}\n"
-        "Use isto para liderar: cite o defeito mais citado e proponha o 1º teste."
-    )
-    return header + "\n" + "\n".join(snippets)
+        result = "(nenhum manual/esquema/defeito comum encontrado ainda)"
+    else:
+        header = (
+            "PESQUISA ATIVA NA WEB (manuais / esquemas / defeitos comuns):\n"
+            f"Alvo: {device or '—'} | Sintoma: {sym or '—'}\n"
+            "Use isto para liderar: cite o defeito mais citado e proponha o 1º teste."
+        )
+        result = header + "\n" + "\n".join(snippets)
+    _RESEARCH_CACHE[cache_key] = result
+    return result
 
 
 def research_for_case(case: dict[str, Any], user_text: str = "") -> str:
-    """Pesquisa para o caso — profunda se já houver modelo."""
+    """Pesquisa para o caso — profunda se já houver modelo (com cache)."""
     board = case.get("board_model") or ""
     symptom = case.get("symptom") or ""
+    # Reusa pesquisa já feita neste caso (não refaz a cada “bom dia”).
+    cached = (case.get("last_research") or "").strip()
+    if cached and board.strip() and len(cached) > 80:
+        return cached
     if board.strip():
-        deep = research_device_deep(board, symptom or user_text)
-        # reforço com a fala atual
-        extra_q = f"{board} {symptom} {user_text}".strip()
-        extra = research_electronics(extra_q, max_results=3) if user_text else ""
-        parts = [p for p in (deep, extra) if p]
-        return "\n\n".join(parts)
+        return research_device_deep(board, symptom or user_text)
     query = f"{board} {symptom} {user_text}".strip()
     return research_electronics(query)
