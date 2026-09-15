@@ -322,7 +322,6 @@ def render_module_card(mod: dict[str, Any]) -> None:
                     st.session_state.last_image_bytes,
                     caption=payload.get("name") or "placa",
                     use_container_width=True,
-                    key=f"img_mod_{mod_id}_r{tok}",
                 )
                 st.caption("Módulo de análise visual — peça o próximo ponto no chat.")
             else:

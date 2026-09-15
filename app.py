@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 # Bump this on every deploy so Cloud Run shows the update in the corner.
-APP_VERSION = "v2.2.0-stable"
+APP_VERSION = "v2.2.1-hotfix"
 from agent.diagnostic import DiagnosticAgent
 from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
@@ -1097,7 +1097,7 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
         # Histórico do chat — só markdown/HTML (sem widgets no loop → anti-removeChild)
         for idx, msg in enumerate(case.get("messages", [])):
             papel = "assistant" if msg["role"] == "assistant" else "user"
-            with st.chat_message(papel, key=f"chat_msg_{cid}_{idx}"):
+            with st.chat_message(papel):
                 st.caption("JARVIS" if msg["role"] == "assistant" else who)
                 st.markdown(msg["content"])
                 meta = msg.get("meta") or {}
@@ -1266,7 +1266,6 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                         annotated,
                         caption="Pontas",
                         use_container_width=True,
-                        key=f"vision_main_{cid}",
                     )
                     zoom = zoom_around_probes(st.session_state.last_image_bytes, coords)
                     if zoom is not None:
@@ -1274,14 +1273,12 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                             zoom,
                             caption="Zoom",
                             use_container_width=True,
-                            key=f"vision_zoom_{cid}",
                         )
                 else:
                     st.image(
                         st.session_state.last_image_bytes,
                         caption=st.session_state.last_image_name or "foto",
                         use_container_width=True,
-                        key=f"vision_main_{cid}",
                     )
             else:
                 st.caption("Sem foto — anexe no composer quando quiser.")
@@ -1736,7 +1733,7 @@ def case_view(ag: DiagnosticAgent) -> None:
         cv_cid = case["case_id"]
         for idx, msg in enumerate(case.get("messages", [])):
             papel = "assistant" if msg["role"] == "assistant" else "user"
-            with st.chat_message(papel, key=f"cv_msg_{cv_cid}_{idx}"):
+            with st.chat_message(papel):
                 st.caption("JARVIS" if msg["role"] == "assistant" else "Você")
                 st.markdown(msg["content"])
                 meta = msg.get("meta") or {}
