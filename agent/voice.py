@@ -126,7 +126,6 @@ def extract_intake_from_speech(transcript: str) -> dict[str, str]:
     model = os.getenv("OPENAI_MODEL", "gpt-5.5")
     response = client.chat.completions.create(
         model=model,
-        temperature=0.1,
         response_format={"type": "json_object"},
         messages=[
             {

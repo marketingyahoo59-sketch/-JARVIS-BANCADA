@@ -1,11 +1,11 @@
 {
   "name": "JARVIS de Bancada",
   "short_name": "JARVIS",
-  "description": "Assistente de diagnóstico eletrônico com voz",
+  "description": "Assistente de diagnóstico eletrônico estilo Homem de Ferro",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
+  "background_color": "#03060d",
+  "theme_color": "#F5B301",
   "lang": "pt-BR",
   "icons": [
     {
