@@ -7,12 +7,14 @@ Guia: **[deploy/CLOUDRUN.md](deploy/CLOUDRUN.md)**
 
 ## O que faz
 
-1. **Personalidade livre** — conversa, piadas, parceiro de bancada.
+1. **Personalidade livre** — conversa, piadas, parceiro de bancada (tom JARVIS, sem robô).
 2. **Modo Mestre Técnico** — lidera o conserto quando detecta diagnóstico.
-3. **Pesquisa ativa** — manuais/esquemas/defeitos (timeout curto).
+3. **Pesquisa ativa** — manuais/esquemas/defeitos; só com **modelo concreto** (filtra lixo web).
 4. **Mapa de diagnóstico** — visual → medições → componentes.
-5. **Memória** — SQLite + fotos no **bucket GCS** (`GCS_BUCKET`).
-6. **Visão**, falhas, PDF, segurança, TTS (edge), PWA, HUD.
+5. **Hotwords** — `anota: …` e `próxima etapa`.
+6. **Memória** — SQLite + fotos no **bucket GCS** (`GCS_BUCKET`).
+7. **Visão**, falhas, PDF, segurança, TTS (edge), PWA, HUD.
+8. **Voz estável** — mic via `st.audio_input` (iframe contínuo removido: corrigia o crash `removeChild`).
 
 ## Local
 
