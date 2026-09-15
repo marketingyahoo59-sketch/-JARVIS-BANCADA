@@ -6,6 +6,7 @@ Diagnóstico eletrônico com voz, visão, pesquisa e memória.
 from __future__ import annotations
 
 import hashlib
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -56,17 +57,30 @@ VERDICT_PT = {"ok": "OK", "fail": "FALHOU", "pending": "pendente", "unknown": "i
 
 HUD_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Rajdhani:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap');
 
-html, body, [class*="css"] { font-family: 'Rajdhani', sans-serif !important; }
+:root {
+  --cyan: #00f2ff;
+  --cyan-dim: rgba(0,242,255,.35);
+  --orange: #ffaa00;
+  --orange-dim: rgba(255,170,0,.35);
+  --glass: rgba(0, 242, 255, 0.05);
+  --ink: #000000;
+  --text: #c8f7ff;
+}
+
+html, body, [class*="css"] {
+  font-family: 'Rajdhani', sans-serif !important;
+}
 
 .stApp {
   background:
-    radial-gradient(1100px 520px at 8% -8%, rgba(245,179,1,.18), transparent 55%),
-    radial-gradient(900px 480px at 100% 0%, rgba(0,209,255,.16), transparent 52%),
-    radial-gradient(700px 420px at 50% 115%, rgba(56,189,248,.10), transparent 55%),
-    linear-gradient(165deg, #03060d 0%, #07111f 45%, #0a1628 100%) !important;
-  color: #E8F3FF;
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,242,255,.12), transparent 55%),
+    radial-gradient(ellipse 40% 40% at 100% 100%, rgba(255,170,0,.08), transparent 50%),
+    radial-gradient(circle at 20% 80%, rgba(0,80,100,.25), transparent 40%),
+    linear-gradient(180deg, #000 0%, #001014 40%, #000 100%) !important;
+  color: var(--text);
+  overflow-x: hidden;
 }
 
 header[data-testid="stHeader"] {
@@ -75,10 +89,123 @@ header[data-testid="stHeader"] {
 }
 #MainMenu, footer, [data-testid="stToolbar"] { visibility: hidden; height: 0; }
 
-/* HUD decorativo não pode roubar cliques do menu */
+/* ===== OVERLAY HUD (não captura cliques) ===== */
+.hud-overlay {
+  position: fixed; inset: 0; z-index: 0;
+  pointer-events: none !important;
+  overflow: hidden;
+}
+.hud-overlay * { pointer-events: none !important; }
+
+.hud-vignette {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.55), transparent 12%, transparent 88%, rgba(0,0,0,.55)),
+    linear-gradient(0deg, rgba(0,0,0,.45), transparent 18%, transparent 85%, rgba(0,0,0,.35));
+}
+
+.hud-grid {
+  position: absolute; inset: 0; opacity: .22;
+  background-image:
+    linear-gradient(rgba(0,242,255,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,242,255,.07) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  animation: gridDrift 28s linear infinite;
+}
+@keyframes gridDrift {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 48px 48px, 48px 48px; }
+}
+
+.hud-scanline {
+  position: absolute; left: 0; width: 100%; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), var(--orange), var(--cyan), transparent);
+  box-shadow: 0 0 18px var(--cyan), 0 0 40px rgba(0,242,255,.35);
+  animation: boardScan 4.2s linear infinite;
+  opacity: .75;
+}
+@keyframes boardScan {
+  0% { top: -2%; opacity: 0; }
+  8% { opacity: .85; }
+  92% { opacity: .85; }
+  100% { top: 102%; opacity: 0; }
+}
+
+.hud-ring-stack {
+  position: absolute; width: 160px; height: 160px;
+}
+.hud-ring-stack.tl { top: 70px; left: 12px; }
+.hud-ring-stack.br { bottom: 40px; right: 16px; }
+.hud-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1px dashed rgba(0,242,255,.45);
+  box-shadow: 0 0 12px rgba(0,242,255,.2), inset 0 0 18px rgba(0,242,255,.08);
+}
+.hud-ring.r2 { inset: 14px; border-style: solid; border-color: rgba(255,170,0,.35);
+  animation: spinRev 14s linear infinite; }
+.hud-ring.r3 { inset: 28px; border: 2px dotted rgba(0,242,255,.55);
+  animation: spin 7s linear infinite; }
+.hud-ring.r1 { animation: spin 18s linear infinite; }
+.hud-ring-core {
+  position: absolute; inset: 48px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #fff 0 6%, #00f2ff 12% 40%, transparent 70%);
+  box-shadow: 0 0 30px rgba(0,242,255,.7);
+  animation: corePulse 2.4s ease-in-out infinite;
+}
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes spinRev { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+@keyframes corePulse {
+  0%,100% { filter: brightness(1); transform: scale(1); }
+  50% { filter: brightness(1.35); transform: scale(1.06); }
+}
+
+.hud-corner {
+  position: absolute; width: 28px; height: 28px;
+  border: 2px solid var(--cyan); opacity: .7;
+  box-shadow: 0 0 10px rgba(0,242,255,.4);
+}
+.hud-corner.tl { top: 10px; left: 10px; border-right:0; border-bottom:0; }
+.hud-corner.tr { top: 10px; right: 10px; border-left:0; border-bottom:0; }
+.hud-corner.bl { bottom: 10px; left: 10px; border-right:0; border-top:0; }
+.hud-corner.br { bottom: 10px; right: 10px; border-left:0; border-top:0; }
+
+.hud-side-rail {
+  position: absolute; top: 22%; width: 118px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.hud-side-rail.left { left: 8px; }
+.hud-side-rail.right { right: 8px; }
+.hud-telem {
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0,242,255,.3);
+  box-shadow: 0 0 15px rgba(0,242,255,.18), inset 0 0 20px rgba(0,242,255,.04);
+  border-radius: 10px;
+  padding: 8px 10px;
+  transition: box-shadow .25s, border-color .25s, transform .25s;
+}
+.hud-telem:hover, .hud-telem.glow {
+  border-color: var(--cyan);
+  box-shadow: 0 0 22px rgba(0,242,255,.45), inset 0 0 24px rgba(0,242,255,.08);
+  transform: translateY(-1px);
+}
+.hud-telem b {
+  display:block; font-family:'Orbitron',sans-serif; font-size:9px;
+  letter-spacing:.14em; color: var(--orange); margin-bottom: 2px;
+}
+.hud-telem span {
+  font-family:'Share Tech Mono', monospace; font-size: 13px; color: var(--cyan);
+  text-shadow: 0 0 8px rgba(0,242,255,.45);
+}
+.hud-telem.warn span { color: var(--orange); text-shadow: 0 0 8px rgba(255,170,0,.5); }
+
+/* Decorativo não rouba cliques do menu Streamlit */
 .j-shell, .j-shell * { pointer-events: none !important; }
 div[data-testid="stMarkdownContainer"]:has(.j-shell),
-div[data-testid="element-container"]:has(.j-shell) {
+div[data-testid="element-container"]:has(.j-shell),
+div[data-testid="stMarkdownContainer"]:has(.hud-overlay),
+div[data-testid="element-container"]:has(.hud-overlay) {
   pointer-events: none !important;
 }
 
@@ -86,211 +213,274 @@ div[data-testid="element-container"]:has(.j-shell) {
   padding-top: .85rem !important;
   padding-bottom: 2.2rem !important;
   max-width: 1180px !important;
+  position: relative; z-index: 1;
 }
 
 .j-shell {
   position: relative; z-index: 1;
   margin-bottom: .75rem;
-  padding: .85rem 1rem;
-  border-radius: 18px;
-  border: 1px solid rgba(0,209,255,.38);
-  background: linear-gradient(135deg, rgba(5,14,28,.94), rgba(12,28,48,.9));
-  box-shadow: 0 0 0 1px rgba(245,179,1,.14), 0 16px 48px rgba(0,0,0,.45),
-              inset 0 0 36px rgba(0,209,255,.06);
+  padding: .95rem 1.05rem;
+  border-radius: 16px;
+  border: 1px solid rgba(0,242,255,.35);
+  background: rgba(0, 242, 255, 0.05);
   backdrop-filter: blur(12px);
+  box-shadow: 0 0 0 1px rgba(255,170,0,.12), 0 0 28px rgba(0,242,255,.15),
+              inset 0 0 40px rgba(0,242,255,.04);
   animation: jpulse 4.8s ease-in-out infinite;
   pointer-events: none;
+  overflow: hidden;
+}
+.j-shell::before {
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:
+    linear-gradient(rgba(0,242,255,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,242,255,.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity:.5;
+  mask-image: linear-gradient(180deg, rgba(0,0,0,.55), transparent 90%);
 }
 @keyframes jpulse {
-  0%,100% { box-shadow: 0 0 0 1px rgba(245,179,1,.14), 0 16px 48px rgba(0,0,0,.45), inset 0 0 36px rgba(0,209,255,.06); }
-  50% { box-shadow: 0 0 0 1px rgba(0,209,255,.4), 0 16px 56px rgba(0,209,255,.14), inset 0 0 44px rgba(245,179,1,.08); }
+  0%,100% { box-shadow: 0 0 0 1px rgba(255,170,0,.12), 0 0 28px rgba(0,242,255,.15), inset 0 0 40px rgba(0,242,255,.04); }
+  50% { box-shadow: 0 0 0 1px rgba(0,242,255,.45), 0 0 40px rgba(0,242,255,.28), inset 0 0 48px rgba(255,170,0,.06); }
 }
 .j-row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
 .j-brand { display:flex; align-items:center; gap:12px; }
 .j-arc {
-  width: 44px; height: 44px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff 0 8%, #7DF9FF 10% 28%, #00D1FF 32% 58%, #0077A8 62% 100%);
-  box-shadow: 0 0 22px rgba(0,209,255,.9), inset 0 0 12px rgba(255,255,255,.55);
+  width: 48px; height: 48px; border-radius: 50%; position: relative;
+  background: radial-gradient(circle at 35% 35%, #fff 0 8%, #7DF9FF 10% 28%, #00f2ff 32% 58%, #0077A8 62% 100%);
+  box-shadow: 0 0 22px rgba(0,242,255,.95), inset 0 0 12px rgba(255,255,255,.55);
   animation: arc 2.1s ease-in-out infinite;
+}
+.j-arc::after {
+  content:""; position:absolute; inset:-6px; border-radius:50%;
+  border:1px dashed rgba(0,242,255,.5); animation: spin 10s linear infinite;
 }
 @keyframes arc {
   0%,100% { transform: scale(1); filter: brightness(1); }
-  50% { transform: scale(1.08); filter: brightness(1.22); }
+  50% { transform: scale(1.08); filter: brightness(1.25); }
 }
 .j-brand h1 {
-  margin:0; font-family:'Orbitron',sans-serif; font-size:1.05rem; letter-spacing:.14em;
-  color:#F5B301; text-shadow: 0 0 16px rgba(245,179,1,.45);
+  margin:0; font-family:'Orbitron',sans-serif; font-size:1.12rem; letter-spacing:.18em;
+  color: var(--cyan); text-shadow: 0 0 18px rgba(0,242,255,.65), 0 0 40px rgba(255,170,0,.2);
 }
-.j-brand p { margin:0; color:#8FB6D8; font-size:.78rem; letter-spacing:.16em; text-transform:uppercase; }
+.j-brand p {
+  margin:0; color: var(--orange); font-size:.72rem; letter-spacing:.2em; text-transform:uppercase;
+  text-shadow: 0 0 10px rgba(255,170,0,.35);
+  font-family:'Orbitron',sans-serif;
+}
+.j-greet {
+  margin-top:.15rem; color: var(--cyan); font-family:'Orbitron',sans-serif;
+  font-size:.72rem; letter-spacing:.1em; text-align:right;
+  text-shadow: 0 0 10px rgba(0,242,255,.35);
+  animation: softGlitch 5.5s steps(2, end) infinite;
+}
+@keyframes softGlitch {
+  0%,90%,100% { transform: none; opacity: 1; text-shadow: 0 0 10px rgba(0,242,255,.35); }
+  92% { transform: translate(1px,0); opacity:.85; text-shadow: -1px 0 #ffaa00, 1px 0 #00f2ff; }
+  94% { transform: translate(-1px,0); }
+}
+
+.j-scan {
+  height:2px; margin-top:10px;
+  background: linear-gradient(90deg, transparent, #00f2ff, #ffaa00, #00f2ff, transparent);
+  background-size: 200% 100%; animation: scanBar 2.6s linear infinite;
+  opacity:.9; box-shadow: 0 0 10px rgba(0,242,255,.5);
+}
+@keyframes scanBar { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+.j-statusstrip {
+  display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:8px; margin-top:12px;
+}
+.j-stat {
+  border:1px solid rgba(0,242,255,.28); border-radius:8px; padding:.5rem .55rem;
+  background: rgba(0, 242, 255, 0.05);
+  backdrop-filter: blur(8px);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  box-shadow: 0 8px 20px rgba(0,0,0,.35), inset 0 0 16px rgba(0,242,255,.06), 0 0 12px rgba(0,242,255,.1);
+  transition: border-color .2s, box-shadow .2s, transform .2s;
+}
+.j-stat:hover {
+  border-color: var(--cyan);
+  box-shadow: 0 0 20px rgba(0,242,255,.35), inset 0 0 18px rgba(0,242,255,.1);
+  transform: translateY(-2px);
+}
+.j-stat b { display:block; font-family:'Orbitron',sans-serif; font-size:.55rem; color: var(--orange); letter-spacing:.12em; }
+.j-stat span { color: var(--cyan); font-size:.92rem; font-weight:600; font-family:'Share Tech Mono', monospace;
+  text-shadow: 0 0 8px rgba(0,242,255,.35); }
+.j-stat.hot span, .j-stat.warn span { color: var(--orange); text-shadow:0 0 10px rgba(255,170,0,.5); }
+.j-stat.ok span { color:#86efac; }
 
 .j-hero {
-  position:relative; overflow:hidden; border-radius:22px; margin-bottom:1rem;
-  padding:1.45rem 1.25rem; border:1px solid rgba(0,209,255,.28);
-  background:
-    linear-gradient(120deg, rgba(0,209,255,.08), transparent 42%),
-    linear-gradient(300deg, rgba(245,179,1,.10), transparent 48%),
-    rgba(6,14,28,.78);
+  position:relative; overflow:hidden; border-radius:18px; margin-bottom:1rem;
+  padding:1.45rem 1.25rem; border:1px solid rgba(0,242,255,.3);
+  background: rgba(0, 242, 255, 0.05);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0 24px rgba(0,242,255,.12), inset 0 0 40px rgba(0,242,255,.04);
+  transition: box-shadow .25s, border-color .25s;
+}
+.j-hero:hover {
+  border-color: rgba(0,242,255,.55);
+  box-shadow: 0 0 36px rgba(0,242,255,.28);
 }
 .j-hero::before {
   content:""; position:absolute; inset:0; pointer-events:none;
   background-image:
-    linear-gradient(rgba(0,209,255,.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,209,255,.07) 1px, transparent 1px);
+    linear-gradient(rgba(0,242,255,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,242,255,.06) 1px, transparent 1px);
   background-size: 34px 34px;
-  mask-image: linear-gradient(180deg, rgba(0,0,0,.5), transparent 88%);
+  mask-image: linear-gradient(180deg, rgba(0,0,0,.45), transparent 88%);
   animation: drift 16s linear infinite;
 }
 @keyframes drift { from { background-position:0 0,0 0; } to { background-position:34px 34px,34px 34px; } }
 .j-hero h2 {
   position:relative; margin:0 0 .35rem; font-family:'Orbitron',sans-serif;
-  font-size:clamp(1.25rem, 3.4vw, 1.9rem); color:#EAF7FF; letter-spacing:.05em;
+  font-size:clamp(1.2rem, 3.2vw, 1.75rem); color:#e8fbff; letter-spacing:.06em;
+  text-shadow: 0 0 16px rgba(0,242,255,.4);
 }
-.j-hero p { position:relative; margin:0; color:#9EBFDA; font-size:1.05rem; line-height:1.35; max-width:40rem; }
+.j-hero p { position:relative; margin:0; color:#9ecfe0; font-size:1.05rem; line-height:1.4; max-width:42rem; }
 
 .j-chip {
   display:inline-flex; align-items:center; gap:8px; padding:.35rem .8rem; border-radius:999px;
-  border:1px solid rgba(0,209,255,.35); background:rgba(0,40,60,.55); color:#7DF9FF;
-  font-family:'Orbitron',sans-serif; font-size:.72rem; letter-spacing:.08em;
+  border:1px solid rgba(0,242,255,.4); background:rgba(0,30,40,.55); color: var(--cyan);
+  font-family:'Orbitron',sans-serif; font-size:.7rem; letter-spacing:.1em;
+  box-shadow: 0 0 12px rgba(0,242,255,.15);
 }
-.j-chip.on { border-color:#22c55e; color:#86efac; box-shadow:0 0 14px rgba(34,197,94,.25); }
-.j-chip.busy { border-color:#F5B301; color:#FFE08A; }
+.j-chip.on { border-color:#22c55e; color:#86efac; box-shadow:0 0 14px rgba(34,197,94,.3); }
+.j-chip.busy { border-color: var(--orange); color:#ffd27a; }
 .j-chip.talk { border-color:#38bdf8; color:#7DD3FC; }
 
 .j-panel {
-  border:1px solid rgba(0,209,255,.22); border-radius:16px; padding:1rem 1.05rem;
-  background:rgba(7,16,32,.72); box-shadow: inset 0 0 28px rgba(0,209,255,.04); margin-bottom:.85rem;
+  border:1px solid rgba(0,242,255,.28); border-radius:14px; padding:1rem 1.05rem;
+  background: rgba(0, 242, 255, 0.05);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 18px rgba(0,242,255,.1), inset 0 0 28px rgba(0,242,255,.04);
+  margin-bottom:.85rem;
+  transition: border-color .2s, box-shadow .2s, transform .2s;
+}
+.j-panel:hover {
+  border-color: rgba(0,242,255,.55);
+  box-shadow: 0 0 28px rgba(0,242,255,.28);
+  transform: translateY(-1px);
 }
 .j-panel h3 {
-  margin:0 0 .5rem; font-family:'Orbitron',sans-serif; font-size:.82rem;
-  letter-spacing:.12em; color:#F5B301; text-transform:uppercase;
+  margin:0 0 .5rem; font-family:'Orbitron',sans-serif; font-size:.78rem;
+  letter-spacing:.14em; color: var(--orange); text-transform:uppercase;
+}
+
+.j-rings { display:flex; flex-wrap:wrap; gap:12px; margin: .6rem 0 1rem; }
+.j-ring {
+  width:92px; height:92px; border-radius:50%;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  border:2px solid rgba(0,242,255,.45);
+  box-shadow: 0 0 18px rgba(0,242,255,.3), inset 0 0 18px rgba(0,242,255,.12);
+  background: radial-gradient(circle at 40% 35%, rgba(0,242,255,.2), rgba(0,0,0,.75));
+  position: relative;
+}
+.j-ring::before {
+  content:""; position:absolute; inset:-4px; border-radius:50%;
+  border:1px dashed rgba(255,170,0,.4); animation: spin 12s linear infinite;
+}
+.j-ring b { font-family:'Orbitron',sans-serif; font-size:.9rem; color: var(--cyan); z-index:1; }
+.j-ring span { font-size:.55rem; letter-spacing:.12em; color:#8FB6D8; text-transform:uppercase; z-index:1; }
+
+.j-risk {
+  border:1px solid rgba(255,170,0,.4); padding:.85rem 1rem; margin-top:.75rem;
+  background: rgba(40,24,0,.4); color:#FFE08A; border-radius:12px;
+  box-shadow: inset 0 0 20px rgba(255,170,0,.08), 0 0 16px rgba(255,170,0,.12);
 }
 
 .stButton > button {
-  border-radius:14px !important;
-  border:1px solid rgba(245,179,1,.55) !important;
-  background: linear-gradient(180deg, #ffd56a 0%, #f5b301 45%, #d97706 100%) !important;
+  border-radius:12px !important;
+  border:1px solid rgba(255,170,0,.6) !important;
+  background: linear-gradient(180deg, #ffd56a 0%, #ffaa00 45%, #d97706 100%) !important;
   color:#0a0f18 !important; font-family:'Orbitron',sans-serif !important;
   font-weight:800 !important; letter-spacing:.06em !important;
-  box-shadow: 0 0 22px rgba(245,179,1,.35), inset 0 1px 0 rgba(255,255,255,.35) !important;
+  box-shadow: 0 0 22px rgba(255,170,0,.35), inset 0 1px 0 rgba(255,255,255,.35) !important;
   position: relative; z-index: 2;
   pointer-events: auto !important;
   text-transform: uppercase !important;
 }
-.j-shell {
-  pointer-events: none !important;
-  position: relative;
-  overflow: hidden;
+.stButton > button:hover {
+  box-shadow: 0 0 32px rgba(0,242,255,.45), 0 0 18px rgba(255,170,0,.45) !important;
+  filter: brightness(1.08);
 }
-.j-shell::after {
-  content:""; position:absolute; inset:0; pointer-events:none;
-  background:
-    linear-gradient(rgba(0,209,255,.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,209,255,.04) 1px, transparent 1px);
-  background-size: 28px 28px;
-  opacity:.55;
-  mask-image: linear-gradient(180deg, rgba(0,0,0,.55), transparent 90%);
-}
-.j-shell * { pointer-events: none !important; }
+
 div[data-testid="stSegmentedControl"] {
   position: relative; z-index: 90;
   pointer-events: auto !important;
   margin-bottom: .85rem;
-  padding: .35rem;
-  border: 1px solid rgba(0,209,255,.28);
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(0,30,50,.55), rgba(0,10,22,.7));
-  box-shadow: inset 0 0 24px rgba(0,209,255,.08), 0 8px 28px rgba(0,0,0,.35);
+  padding: .4rem;
+  border: 1px solid rgba(0,242,255,.35);
+  border-radius: 14px;
+  background: rgba(0, 242, 255, 0.05);
+  backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 24px rgba(0,242,255,.08), 0 0 20px rgba(0,242,255,.12);
 }
 div[data-testid="stSegmentedControl"] button,
 div[data-testid="stSegmentedControl"] label,
 div[data-testid="stSegmentedControl"] * {
   pointer-events: auto !important;
   font-family:'Orbitron',sans-serif !important;
-  font-size:.7rem !important;
+  font-size:.68rem !important;
   letter-spacing:.06em !important;
   text-transform: uppercase !important;
 }
-/* Botões do menu top estilo armadura / ouro Stark */
 div[data-testid="stSegmentedControl"] [data-baseweb="button"],
 div[data-testid="stSegmentedControl"] button {
-  background: linear-gradient(180deg, #ffe08a 0%, #f5b301 42%, #c97800 100%) !important;
+  background: linear-gradient(180deg, #ffe08a 0%, #ffaa00 42%, #c97800 100%) !important;
   color: #0a0f18 !important;
   border: 1px solid rgba(255, 200, 80, .65) !important;
-  box-shadow: 0 0 16px rgba(245,179,1,.28), inset 0 1px 0 rgba(255,255,255,.28) !important;
-  border-radius: 12px !important;
+  box-shadow: 0 0 16px rgba(255,170,0,.28), inset 0 1px 0 rgba(255,255,255,.28) !important;
+  border-radius: 10px !important;
   font-weight: 800 !important;
 }
 div[data-testid="stSegmentedControl"] button[aria-checked="true"],
 div[data-testid="stSegmentedControl"] [aria-checked="true"] {
-  box-shadow: 0 0 28px rgba(0,209,255,.45), 0 0 18px rgba(245,179,1,.45), inset 0 0 12px rgba(255,255,255,.2) !important;
-  border-color: #7DF9FF !important;
+  box-shadow: 0 0 28px rgba(0,242,255,.5), 0 0 18px rgba(255,170,0,.4), inset 0 0 12px rgba(255,255,255,.2) !important;
+  border-color: #00f2ff !important;
   filter: brightness(1.08);
 }
+
+/* Chat holográfico */
 div[data-testid="stChatMessage"] {
-  background: linear-gradient(145deg, rgba(8,22,40,.82), rgba(4,12,24,.88)) !important;
-  border: 1px solid rgba(0,209,255,.22) !important;
-  border-radius: 16px !important;
-  box-shadow: 0 8px 24px rgba(0,0,0,.25), inset 0 0 20px rgba(0,209,255,.04) !important;
+  background: rgba(0, 242, 255, 0.05) !important;
+  backdrop-filter: blur(10px) !important;
+  border: 1px solid rgba(0,242,255,.28) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 0 20px rgba(0,242,255,.12), inset 0 0 24px rgba(0,242,255,.04) !important;
+  animation: msgIn .45s ease-out both;
+  transition: border-color .2s, box-shadow .2s;
+}
+div[data-testid="stChatMessage"]:hover {
+  border-color: rgba(0,242,255,.55) !important;
+  box-shadow: 0 0 28px rgba(0,242,255,.3) !important;
+}
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px) skewX(-1deg); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+div[data-testid="stChatMessage"] p,
+div[data-testid="stChatMessage"] span,
+div[data-testid="stChatMessage"] .stMarkdown {
+  color: #d5f8ff !important;
+  text-shadow: 0 0 6px rgba(0,242,255,.15);
 }
 div[data-testid="stChatInput"] textarea,
 div[data-testid="stChatInput"] {
-  border-color: rgba(0,209,255,.35) !important;
-  background: rgba(4,14,28,.85) !important;
-}
-.j-hud-corner {
-  position:absolute; width:14px; height:14px; border-color:#00D1FF; border-style:solid; opacity:.7;
-}
-.j-brand h1 {
-  margin:0; font-family:'Orbitron',sans-serif; font-size:1.15rem; letter-spacing:.18em;
-  color:#F5B301; text-shadow: 0 0 18px rgba(245,179,1,.55), 0 0 40px rgba(0,209,255,.2);
-}
-.j-brand p {
-  margin:0; color:#7DF9FF; font-size:.72rem; letter-spacing:.2em; text-transform:uppercase;
-  text-shadow: 0 0 10px rgba(0,209,255,.35);
+  border-color: rgba(0,242,255,.4) !important;
+  background: rgba(0,10,14,.85) !important;
+  color: #c8f7ff !important;
+  box-shadow: 0 0 16px rgba(0,242,255,.12) !important;
 }
 
-.j-statusstrip {
-  display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:8px; margin-top:10px;
+.j-tech-tip {
+  font-family:'Share Tech Mono', monospace; font-size:.72rem; color: rgba(0,242,255,.7);
+  letter-spacing:.04em;
 }
-.j-stat {
-  border:1px solid rgba(0,209,255,.25); border-radius:4px; padding:.45rem .55rem;
-  background: linear-gradient(160deg, rgba(0,40,70,.55), rgba(0,12,28,.5));
-  transform: perspective(700px) rotateX(4deg) rotateY(-1deg);
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-  box-shadow: 0 10px 22px rgba(0,0,0,.35), inset 0 0 16px rgba(0,209,255,.08), 0 0 12px rgba(0,209,255,.12);
-}
-.j-stat b { display:block; font-family:'Orbitron',sans-serif; font-size:.58rem; color:#F5B301; letter-spacing:.1em; }
-.j-stat span { color:#B7D7F0; font-size:.9rem; font-weight:600; }
-.j-stat.hot span { color:#ff7b7b; text-shadow:0 0 10px rgba(255,80,80,.45); }
-.j-stat.ok span { color:#86efac; }
-.j-greet {
-  margin-top:.35rem; color:#7DF9FF; font-family:'Orbitron',sans-serif;
-  font-size:.72rem; letter-spacing:.1em; text-align:right;
-}
-.j-scan {
-  height:2px; margin-top:8px;
-  background: linear-gradient(90deg, transparent, #00D1FF, #F5B301, #00D1FF, transparent);
-  background-size: 200% 100%; animation: scan 2.8s linear infinite;
-  opacity:.85;
-}
-@keyframes scan { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-.j-rings {
-  display:flex; flex-wrap:wrap; gap:12px; margin: .6rem 0 1rem;
-}
-.j-ring {
-  width:92px; height:92px; border-radius:50%;
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  border:2px solid rgba(0,209,255,.45);
-  box-shadow: 0 0 18px rgba(0,209,255,.25), inset 0 0 18px rgba(0,209,255,.12);
-  background: radial-gradient(circle at 40% 35%, rgba(0,209,255,.18), rgba(0,10,25,.7));
-  transform: perspective(500px) rotateX(8deg);
-}
-.j-ring b { font-family:'Orbitron',sans-serif; font-size:.95rem; color:#7DF9FF; }
-.j-ring span { font-size:.58rem; letter-spacing:.12em; color:#8FB6D8; text-transform:uppercase; }
-.j-risk {
-  border:1px solid rgba(245,179,1,.35); padding:.85rem 1rem; margin-top:.75rem;
-  background: rgba(40,24,0,.35); color:#FFE08A; border-radius:12px;
-  box-shadow: inset 0 0 20px rgba(245,179,1,.08);
+
+@media (max-width: 1100px) {
+  .hud-side-rail { display: none; }
+  .hud-ring-stack { opacity: .35; transform: scale(.7); }
 }
 @media (max-width: 900px) {
   .j-statusstrip { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -298,10 +488,11 @@ div[data-testid="stChatInput"] {
 }
 @media (max-width: 768px) {
   .block-container { padding-left:.65rem !important; padding-right:.65rem !important; }
-  .j-shell { border-radius:14px; padding:.7rem; }
+  .j-shell { border-radius:12px; padding:.7rem; }
   .j-brand h1 { font-size:.92rem; }
-  .j-hero { padding:1.1rem 1rem; border-radius:16px; }
-  .j-hero h2 { font-size:1.15rem; }
+  .j-hero { padding:1.1rem 1rem; border-radius:14px; }
+  .j-hero h2 { font-size:1.1rem; }
+  .hud-ring-stack { display:none; }
 }
 </style>
 """
@@ -321,6 +512,49 @@ def inject_hud() -> None:
         '<link rel="manifest" href="/app/static/manifest.json" />',
         unsafe_allow_html=True,
     )
+    # Overlay holográfico fixo (pointer-events:none — não quebra cliques).
+    v = random.uniform(11.7, 12.4)
+    hz = random.randint(48, 62)
+    ma = random.uniform(0.12, 0.48)
+    tmp = random.uniform(28.0, 41.0)
+    scan = random.choice(["SYNC", "PROBE", "MAP", "IDLE"])
+    st.markdown(
+        f"""
+        <div class="hud-overlay" aria-hidden="true">
+          <div class="hud-vignette"></div>
+          <div class="hud-grid"></div>
+          <div class="hud-scanline"></div>
+          <div class="hud-corner tl"></div>
+          <div class="hud-corner tr"></div>
+          <div class="hud-corner bl"></div>
+          <div class="hud-corner br"></div>
+          <div class="hud-ring-stack tl">
+            <div class="hud-ring r1"></div>
+            <div class="hud-ring r2"></div>
+            <div class="hud-ring r3"></div>
+            <div class="hud-ring-core"></div>
+          </div>
+          <div class="hud-ring-stack br">
+            <div class="hud-ring r1"></div>
+            <div class="hud-ring r2"></div>
+            <div class="hud-ring r3"></div>
+            <div class="hud-ring-core"></div>
+          </div>
+          <div class="hud-side-rail left">
+            <div class="hud-telem glow"><b>RAIL 12V</b><span>{v:.2f} V</span></div>
+            <div class="hud-telem"><b>FREQ</b><span>{hz} kHz</span></div>
+            <div class="hud-telem"><b>I-SENSE</b><span>{ma:.2f} A</span></div>
+          </div>
+          <div class="hud-side-rail right">
+            <div class="hud-telem"><b>BOARD ΔT</b><span>{tmp:.1f} °C</span></div>
+            <div class="hud-telem warn"><b>SCAN</b><span>{scan}</span></div>
+            <div class="hud-telem"><b>PESQUISA</b><span>LIVE</span></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 
 def get_agent() -> DiagnosticAgent:
@@ -386,6 +620,8 @@ def top_menu() -> str:
         pc_label = host.get("label") or "HOST"
     hour = datetime.now().hour
     greet = "BOM DIA" if hour < 12 else ("BOA TARDE" if hour < 18 else "BOA NOITE")
+    v_bus = random.uniform(4.85, 5.15)
+    scan_pct = random.randint(18, 97)
     st.markdown(
         f"""
         <div class="j-shell">
@@ -394,19 +630,25 @@ def top_menu() -> str:
               <div class="j-arc"></div>
               <div>
                 <h1>JARVIS</h1>
-                <p>DE BANCADA · {model}</p>
+                <p>HUD ENGENHARIA · {model}</p>
               </div>
             </div>
-            <div class="j-greet">{greet}, {who.upper()} · SISTEMAS À SUA DISPOSIÇÃO</div>
+            <div class="j-greet">{greet}, {who.upper()} · CENTRO DE COMANDO ONLINE</div>
           </div>
           <div class="j-scan"></div>
           <div class="j-statusstrip">
-            <div class="j-stat"><b>OPERADOR</b><span>{who}</span></div>
-            <div class="j-stat"><b>OFICINA</b><span>{profile.get('workshop','—')}</span></div>
-            <div class="j-stat"><b>CPU HOST</b><span>{cpu_s}</span></div>
-            <div class="j-stat"><b>RAM HOST</b><span>{ram_s}</span></div>
-            <div class="j-stat {temp_cls}"><b>{pc_label}</b><span>{pc_temp}</span></div>
-            <div class="j-stat"><b>ENLACE</b><span>{(info.get('active') or '—').upper()}</span></div>
+            <div class="j-stat" title="Operador autenticado"><b>OPERADOR</b><span>{who}</span></div>
+            <div class="j-stat" title="Oficina ativa"><b>OFICINA</b><span>{profile.get('workshop','—')}</span></div>
+            <div class="j-stat" title="Carga do host"><b>CPU HOST</b><span>{cpu_s}</span></div>
+            <div class="j-stat" title="Memória do host"><b>RAM HOST</b><span>{ram_s}</span></div>
+            <div class="j-stat {temp_cls}" title="Telemetria térmica"><b>{pc_label}</b><span>{pc_temp}</span></div>
+            <div class="j-stat" title="Enlace IA"><b>ENLACE</b><span>{(info.get('active') or '—').upper()}</span></div>
+          </div>
+          <div class="j-rings">
+            <div class="j-ring"><b>{cpu_s}</b><span>CPU</span></div>
+            <div class="j-ring"><b>{ram_s}</b><span>RAM</span></div>
+            <div class="j-ring"><b>{v_bus:.1f}V</b><span>BUS</span></div>
+            <div class="j-ring"><b>{scan_pct}%</b><span>SCAN</span></div>
           </div>
         </div>
         """,
@@ -569,8 +811,8 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
     st.markdown(
         f"""
         <div class="j-hero">
-          <h2>Sistemas à sua disposição, {who}</h2>
-          <p>Parceiro de bancada — sem modo robô. Mande foto quando quiser.
+          <h2>Centro de comando, {who}</h2>
+          <p>HUD holográfico na bancada — parceiro, não robô. Mande foto quando quiser.
           Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu assumo o multímetro.
           Atalhos: <b>anota:</b> … · <b>próxima etapa</b> · retomar “placa de ontem”.</p>
         </div>
@@ -730,6 +972,23 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                     st.rerun()
 
     with right:
+        # Painel holográfico de telemetria da placa (valores oscilam a cada rerun)
+        board_lbl = board if board and board != "—" else "AGUARDANDO MODELO"
+        st.markdown(
+            f"""
+            <div class="j-panel">
+              <h3>Telemetria da placa</h3>
+              <div class="j-rings">
+                <div class="j-ring"><b>{random.uniform(11.6,12.5):.1f}</b><span>VBUS</span></div>
+                <div class="j-ring"><b>{random.uniform(3.25,3.38):.2f}</b><span>3V3</span></div>
+                <div class="j-ring"><b>{random.randint(32,48)}</b><span>°C</span></div>
+                <div class="j-ring"><b>{random.randint(1,9)}</b><span>NET</span></div>
+              </div>
+              <p class="j-tech-tip">MODELO · {board_lbl}<br/>SINTOMA · {symptom}<br/>SCANNER · ANALISANDO BANCADA</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         dm = case.get("diagnostic_map")
         if dm and mode == "electronics":
             st.markdown('<div class="j-panel"><h3>Mapa de diagnóstico</h3>', unsafe_allow_html=True)
