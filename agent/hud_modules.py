@@ -137,6 +137,16 @@ def detect_hud_intents(text: str) -> dict[str, Any]:
     if VIDEO_RE.search(t):
         out["open"].append("video")
 
+    # "abre o esquema da placa" → prioriza esquema (não abre slot de foto à toa)
+    if "schematic" in out["open"] and "board" in out["open"]:
+        if re.search(r"\besquema\b|\bschematic\b|\bdatasheet\b|\bmanual\b|\bdiagrama\b", t, re.I):
+            if not re.search(
+                r"\b(ver a placa|mostra a placa|foto da placa|abre a (foto|imagem)|an[aá]lise visual)\b",
+                t,
+                re.I,
+            ):
+                out["open"] = [k for k in out["open"] if k != "board"]
+
     if out["music_on"] is not None and not out["open"] and not TECH_RE.search(t):
         out["handled_ui_only"] = True
     elif out["open"] and not TECH_RE.search(t):
