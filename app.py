@@ -22,6 +22,13 @@ from agent.profile import address_user, list_presets, load_profile, save_profile
 from agent.safety import safety_brief, safety_checklist
 from agent.system_hud import host_metrics, load_remote_pc_sensor
 from agent.vision import annotate_board, zoom_around_probes
+from agent.hud_modules import (
+    apply_hud_intents,
+    detect_hud_intents,
+    ensure_hud_state,
+    render_music_dock,
+    render_zone_modules,
+)
 from agent.voice import extract_intake_from_speech, speak_text, transcribe_audio
 
 st.set_page_config(
@@ -500,6 +507,84 @@ div[data-testid="stChatInput"] {
   .j-hero h2 { font-size:1.1rem; }
   .hud-ring-stack { display:none; }
 }
+
+/* ===== DASHBOARD MODULAR ===== */
+.j-zone { min-height: 200px; margin-bottom: .7rem; }
+.j-zone-title {
+  font-family: 'Orbitron', sans-serif; font-size: .62rem; letter-spacing: .16em;
+  color: var(--orange); margin-bottom: .4rem; text-shadow: 0 0 10px rgba(255,170,0,.35);
+}
+.j-module {
+  border: 1px solid rgba(0,242,255,.35); border-radius: 14px;
+  background: rgba(0,242,255,.05); backdrop-filter: blur(12px);
+  box-shadow: 0 0 24px rgba(0,242,255,.18), inset 0 0 28px rgba(0,242,255,.04);
+  padding: .75rem .85rem; margin-bottom: .65rem; transform-origin: center;
+}
+.j-module-empty {
+  border-style: dashed; opacity: .75; min-height: 110px;
+  display:flex; align-items:center; justify-content:center; text-align:center;
+  color:#8fd; font-size:.9rem;
+}
+.j-module-bar {
+  display:flex; justify-content:space-between; align-items:center;
+  font-family:'Orbitron',sans-serif; font-size:.68rem; letter-spacing:.12em;
+  color: var(--cyan); margin-bottom:.55rem; text-shadow:0 0 10px rgba(0,242,255,.4);
+}
+.j-module-id { color: var(--orange); opacity:.8; font-size:.58rem; }
+.pop-in { animation: popIn .55s cubic-bezier(.16,1,.3,1) both; }
+@keyframes popIn {
+  0% { opacity:0; transform:scale(.55) translateY(12px); filter:blur(4px); }
+  100% { opacity:1; transform:none; filter:none; }
+}
+.j-schematic svg { width:100%; height:auto; display:block; }
+.j-schematic p { color:#9ecfe0; font-size:.85rem; margin:.4rem 0 0; }
+.j-video {
+  position:relative; width:100%; padding-top:56.25%; border-radius:10px; overflow:hidden;
+  border:1px solid rgba(0,242,255,.3); box-shadow:0 0 18px rgba(0,242,255,.2);
+}
+.j-video iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+.hud-particles {
+  position:absolute; inset:0; opacity:.55; pointer-events:none;
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, rgba(0,242,255,.55), transparent),
+    radial-gradient(1px 1px at 70% 60%, rgba(255,170,0,.45), transparent),
+    radial-gradient(1.5px 1.5px at 40% 80%, rgba(0,242,255,.35), transparent),
+    radial-gradient(1px 1px at 85% 20%, rgba(0,242,255,.5), transparent);
+  animation: particleDrift 18s linear infinite;
+}
+@keyframes particleDrift {
+  from { transform:translateY(0); opacity:.4; }
+  50% { opacity:.7; }
+  to { transform:translateY(-24px); opacity:.4; }
+}
+.hud-noise {
+  position:absolute; inset:0; pointer-events:none; opacity:.35;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 2px, rgba(0,242,255,.03) 2px, rgba(0,242,255,.03) 4px
+  );
+  animation: noiseShift 6s linear infinite;
+}
+@keyframes noiseShift { from { transform:translateY(0);} to { transform:translateY(4px);} }
+.j-arc.busy {
+  box-shadow: 0 0 28px rgba(255,170,0,.95), inset 0 0 14px rgba(255,255,255,.55);
+  animation: arc 0.7s ease-in-out infinite;
+}
+.j-arc.busy::after { border-color: rgba(255,170,0,.75); animation: spin 2.2s linear infinite; }
+.j-cascade { display:flex; flex-wrap:wrap; gap:8px; margin:.35rem 0 .85rem; }
+.j-cascade span {
+  font-family:'Orbitron',sans-serif; font-size:.58rem; letter-spacing:.1em;
+  padding:.28rem .55rem; border-radius:8px; border:1px solid rgba(0,242,255,.28);
+  background:rgba(0,242,255,.05); color:#9ef; animation: cascadeIn .35s ease both;
+}
+.j-cascade span:nth-child(2){animation-delay:.05s}
+.j-cascade span:nth-child(3){animation-delay:.1s}
+.j-cascade span:nth-child(4){animation-delay:.15s}
+@keyframes cascadeIn { from{opacity:0;transform:translateY(-6px);} to{opacity:1;transform:none;} }
+.j-music-wrap { position:relative; z-index:2; margin:.5rem 0 .25rem; }
+.j-cmd-title {
+  font-family:'Orbitron',sans-serif; font-size:.65rem; letter-spacing:.16em;
+  color: var(--cyan); margin:.2rem 0 .5rem;
+}
 </style>
 """
 
@@ -593,6 +678,9 @@ def ensure_session() -> None:
         "greeted_once": False,
         "tts_autoplay": False,
         "_pending_voice": None,
+        "hud_modules": [],
+        "music_on": False,
+        "music_track": 0,
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -635,12 +723,13 @@ def top_menu() -> str:
     greet = "BOM DIA" if hour < 12 else ("BOA TARDE" if hour < 18 else "BOA NOITE")
     v_bus = random.uniform(4.85, 5.15)
     scan_pct = random.randint(18, 97)
+    arc_cls = "busy" if st.session_state.get("voice_status") == "processing" else ""
     st.markdown(
         f"""
         <div class="j-shell">
           <div class="j-row">
             <div class="j-brand">
-              <div class="j-arc"></div>
+              <div class="j-arc {arc_cls}"></div>
               <div>
                 <h1>JARVIS</h1>
                 <p>HUD ENGENHARIA · {model}</p>
@@ -692,6 +781,17 @@ def top_menu() -> str:
     )
     if chosen in keys:
         st.session_state.nav = chosen
+    cascade = {
+        "bancada": ["CHAT", "MÓDULOS", "MIC", "MÍDIA"],
+        "casos": ["ABERTOS", "RESOLVIDOS", "RETOMAR"],
+        "falhas": ["BANCO", "PARECIDOS", "APRENDER"],
+        "seguranca": ["CHECKLIST", "ALERTAS"],
+        "sistemas": ["CPU", "RAM", "ENLACE", "GCS"],
+        "config": ["PERFIL", "VOZ", "MODELO"],
+    }.get(st.session_state.nav, [])
+    if cascade:
+        chips = "".join(f"<span>{c}</span>" for c in cascade)
+        st.markdown(f'<div class="j-cascade">{chips}</div>', unsafe_allow_html=True)
     return st.session_state.nav
 
 
@@ -764,6 +864,34 @@ def submit_user_turn(
     image_mime: str = "image/jpeg",
 ) -> None:
     st.session_state.case_id = case["case_id"]
+    if image_bytes:
+        st.session_state.last_image_bytes = image_bytes
+        st.session_state.last_image_name = image_name or "placa.jpg"
+
+    # HUD modular: música / módulos flutuantes sem trocar de página.
+    ensure_hud_state()
+    intents = detect_hud_intents(text)
+    if intents.get("music_on") is not None or intents.get("open") or intents.get("close_all"):
+        apply_hud_intents(intents, case)
+    if intents.get("handled_ui_only") and image_bytes is None:
+        reply = intents.get("reply") or "HUD atualizado."
+        spoken = intents.get("spoken") or reply
+        try:
+            ag.memory.add_message(case, "user", text)
+            ag.memory.add_message(
+                case,
+                "assistant",
+                reply,
+                meta={"phase": "chat", "mode": "chat", "spoken_reply": spoken, "hud": True},
+            )
+        except Exception:
+            pass
+        play_agent_voice(spoken)
+        st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
+        st.session_state.agent_speaking = False
+        st.rerun()
+        return
+
     # Pausa o microfone ANTES do spinner — evita erro React removeChild
     # e impede nova fala enquanto a IA pensa.
     st.session_state.voice_status = "processing"
@@ -825,9 +953,9 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
         f"""
         <div class="j-hero">
           <h2>Centro de comando, {who}</h2>
-          <p>HUD holográfico na bancada — parceiro, não robô. Mande foto quando quiser.
+          <p>Dashboard modular estilo Homem de Ferro — módulos flutuam, chat fica. Mande foto quando quiser.
           Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu assumo o multímetro.
-          Atalhos: <b>anota:</b> … · <b>próxima etapa</b> · retomar “placa de ontem”.</p>
+          Atalhos: <b>música de foco</b> · <b>abre o esquema</b> · <b>ver a placa</b> · <b>abre o vídeo</b> · <b>anota:</b> …</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -864,8 +992,18 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                 st.session_state.nav_segment = "casos"
             st.rerun()
 
-    left, right = st.columns([1.45, 1], gap="large")
+    st.markdown(
+        '<div class="j-cmd-title">ZONA DE COMANDO · ANÁLISE · TELEMETRIA</div>',
+        unsafe_allow_html=True,
+    )
+    left, center, right = st.columns([1.05, 1.45, 1.05], gap="medium")
     with left:
+        render_zone_modules("left")
+    with center:
+        st.markdown(
+            '<div class="j-cmd-title">ZONA DE COMANDO · CHAT</div>',
+            unsafe_allow_html=True,
+        )
         # Histórico do chat
         for msg in case.get("messages", []):
             papel = "assistant" if msg["role"] == "assistant" else "user"
@@ -985,6 +1123,7 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                     st.rerun()
 
     with right:
+        render_zone_modules("right")
         # Painel holográfico de telemetria da placa (valores oscilam a cada rerun)
         board_lbl = board if board and board != "—" else "AGUARDANDO MODELO"
         st.markdown(
@@ -1061,6 +1200,10 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
 
         st.caption(f"🛡️ {safety_brief(case.get('phase') if mode == 'electronics' else 'intake')}")
 
+
+    st.markdown('<div class="j-music-wrap">', unsafe_allow_html=True)
+    render_music_dock()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def mount_listen_slot() -> str | None:
     """Iframe de escuta contínua REMOVIDO (anti-removeChild). Sempre None."""
