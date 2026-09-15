@@ -164,34 +164,87 @@ div[data-testid="element-container"]:has(.j-shell) {
 }
 
 .stButton > button {
-  border-radius:12px !important;
-  border:1px solid rgba(245,179,1,.45) !important;
-  background: linear-gradient(135deg, rgba(245,179,1,.96), rgba(255,213,106,.88)) !important;
+  border-radius:14px !important;
+  border:1px solid rgba(245,179,1,.55) !important;
+  background: linear-gradient(180deg, #ffd56a 0%, #f5b301 45%, #d97706 100%) !important;
   color:#0a0f18 !important; font-family:'Orbitron',sans-serif !important;
-  font-weight:700 !important; letter-spacing:.05em !important;
-  box-shadow: 0 0 18px rgba(245,179,1,.25) !important;
+  font-weight:800 !important; letter-spacing:.06em !important;
+  box-shadow: 0 0 22px rgba(245,179,1,.35), inset 0 1px 0 rgba(255,255,255,.35) !important;
   position: relative; z-index: 2;
   pointer-events: auto !important;
+  text-transform: uppercase !important;
 }
-.j-shell { pointer-events: none !important; }
+.j-shell {
+  pointer-events: none !important;
+  position: relative;
+  overflow: hidden;
+}
+.j-shell::after {
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:
+    linear-gradient(rgba(0,209,255,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,209,255,.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity:.55;
+  mask-image: linear-gradient(180deg, rgba(0,0,0,.55), transparent 90%);
+}
 .j-shell * { pointer-events: none !important; }
 div[data-testid="stSegmentedControl"] {
   position: relative; z-index: 90;
   pointer-events: auto !important;
-  margin-bottom: .75rem;
+  margin-bottom: .85rem;
+  padding: .35rem;
+  border: 1px solid rgba(0,209,255,.28);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(0,30,50,.55), rgba(0,10,22,.7));
+  box-shadow: inset 0 0 24px rgba(0,209,255,.08), 0 8px 28px rgba(0,0,0,.35);
 }
 div[data-testid="stSegmentedControl"] button,
 div[data-testid="stSegmentedControl"] label,
 div[data-testid="stSegmentedControl"] * {
   pointer-events: auto !important;
   font-family:'Orbitron',sans-serif !important;
-  font-size:.72rem !important;
-  letter-spacing:.04em !important;
+  font-size:.7rem !important;
+  letter-spacing:.06em !important;
+  text-transform: uppercase !important;
+}
+/* Botões do menu top estilo armadura / ouro Stark */
+div[data-testid="stSegmentedControl"] [data-baseweb="button"],
+div[data-testid="stSegmentedControl"] button {
+  background: linear-gradient(180deg, #ffe08a 0%, #f5b301 42%, #c97800 100%) !important;
+  color: #0a0f18 !important;
+  border: 1px solid rgba(255, 200, 80, .65) !important;
+  box-shadow: 0 0 16px rgba(245,179,1,.28), inset 0 1px 0 rgba(255,255,255,.28) !important;
+  border-radius: 12px !important;
+  font-weight: 800 !important;
+}
+div[data-testid="stSegmentedControl"] button[aria-checked="true"],
+div[data-testid="stSegmentedControl"] [aria-checked="true"] {
+  box-shadow: 0 0 28px rgba(0,209,255,.45), 0 0 18px rgba(245,179,1,.45), inset 0 0 12px rgba(255,255,255,.2) !important;
+  border-color: #7DF9FF !important;
+  filter: brightness(1.08);
 }
 div[data-testid="stChatMessage"] {
-  background: rgba(8,18,34,.72) !important;
-  border: 1px solid rgba(0,209,255,.18) !important;
-  border-radius: 14px !important;
+  background: linear-gradient(145deg, rgba(8,22,40,.82), rgba(4,12,24,.88)) !important;
+  border: 1px solid rgba(0,209,255,.22) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25), inset 0 0 20px rgba(0,209,255,.04) !important;
+}
+div[data-testid="stChatInput"] textarea,
+div[data-testid="stChatInput"] {
+  border-color: rgba(0,209,255,.35) !important;
+  background: rgba(4,14,28,.85) !important;
+}
+.j-hud-corner {
+  position:absolute; width:14px; height:14px; border-color:#00D1FF; border-style:solid; opacity:.7;
+}
+.j-brand h1 {
+  margin:0; font-family:'Orbitron',sans-serif; font-size:1.15rem; letter-spacing:.18em;
+  color:#F5B301; text-shadow: 0 0 18px rgba(245,179,1,.55), 0 0 40px rgba(0,209,255,.2);
+}
+.j-brand p {
+  margin:0; color:#7DF9FF; font-size:.72rem; letter-spacing:.2em; text-transform:uppercase;
+  text-shadow: 0 0 10px rgba(0,209,255,.35);
 }
 
 .j-statusstrip {
@@ -347,10 +400,10 @@ def top_menu() -> str:
               <div class="j-arc"></div>
               <div>
                 <h1>JARVIS</h1>
-                <p>COMMAND CENTER · {model}</p>
+                <p>DE BANCADA · {model}</p>
               </div>
             </div>
-            <div class="j-greet">{greet}, {who.upper()} · SISTEMAS ONLINE</div>
+            <div class="j-greet">{greet}, {who.upper()} · SISTEMAS À SUA DISPOSIÇÃO</div>
           </div>
           <div class="j-scan"></div>
           <div class="j-statusstrip">
@@ -359,7 +412,7 @@ def top_menu() -> str:
             <div class="j-stat"><b>CPU HOST</b><span>{cpu_s}</span></div>
             <div class="j-stat"><b>RAM HOST</b><span>{ram_s}</span></div>
             <div class="j-stat {temp_cls}"><b>{pc_label}</b><span>{pc_temp}</span></div>
-            <div class="j-stat"><b>IA</b><span>{(info.get('active') or '—').upper()}</span></div>
+            <div class="j-stat"><b>ENLACE</b><span>{(info.get('active') or '—').upper()}</span></div>
           </div>
         </div>
         """,
@@ -514,9 +567,10 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
     st.markdown(
         f"""
         <div class="j-hero">
-          <h2>Olá, {who}</h2>
-          <p>Fale comigo à vontade. Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu
-          assumo o diagnóstico com o multímetro. Pode retomar: “continuando a placa de ontem”.</p>
+          <h2>Sistemas à sua disposição, {who}</h2>
+          <p>Chat livre — parceiro de bancada, não robô travado. Mande foto quando quiser.
+          Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu assumo a liderança com o multímetro.
+          Pode retomar: “continuando a placa de ontem”.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -843,7 +897,7 @@ def page_sistemas(ag: DiagnosticAgent) -> None:
     st.markdown(
         f"""
         <div class="j-hero">
-          <h2>SISTEMAS ONLINE · {who.upper()}</h2>
+          <h2>SISTEMAS À SUA DISPOSIÇÃO · {who.upper()}</h2>
           <p>Telemetria do núcleo: CPU, RAM, temperatura e estado da armadura. Fonte: {src}.</p>
         </div>
         """,
