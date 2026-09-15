@@ -123,7 +123,7 @@ def _for_speech(text: str) -> str:
 def extract_intake_from_speech(transcript: str) -> dict[str, str]:
     """Extrai modelo da placa e sintoma de uma fala livre."""
     client = _openai_client()
-    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    model = os.getenv("OPENAI_MODEL", "gpt-5.5")
     response = client.chat.completions.create(
         model=model,
         temperature=0.1,

@@ -65,7 +65,7 @@ PHASE_PT = {
     "done": "concluído",
 }
 VERDICT_PT = {"ok": "OK", "fail": "FALHOU", "pending": "pendente", "unknown": "indefinido"}
-PROVIDER_PT = {"openai": "OpenAI (GPT-4o)", "anthropic": "Claude 3.5 Sonnet"}
+PROVIDER_PT = {"openai": "OpenAI", "anthropic": "Anthropic"}
 
 
 def pt(mapa: dict[str, str], valor: str | None, padrao: str = "—") -> str:
@@ -225,7 +225,10 @@ def sidebar_cases(ag: DiagnosticAgent) -> None:
     if info.get("mock"):
         st.sidebar.warning("Sem API key — modo demo.")
     else:
-        st.sidebar.success(f"IA ativa: **{pt(PROVIDER_PT, info.get('active'), 'IA')}**")
+        st.sidebar.success(
+            f"IA ativa: **{pt(PROVIDER_PT, info.get('active'), 'IA')}** · "
+            f"`{info.get('model', '?')}`"
+        )
 
     st.session_state.voice_out = st.sidebar.toggle(
         "Agente fala as respostas", value=st.session_state.voice_out
@@ -352,6 +355,7 @@ def intake_form(ag: DiagnosticAgent) -> None:
             st.session_state.case_id = result["case"]["case_id"]
             play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
             st.rerun()
+
 
 def case_view(ag: DiagnosticAgent) -> None:
     case = ag.load_case(st.session_state.case_id)

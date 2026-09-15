@@ -12,19 +12,28 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SYSTEM_PROMPT = """Você é JARVIS DE BANCADA — assistente de diagnóstico eletrônico de elite.
-O usuário é só as mãos (pode não saber eletrônica). Você é o cérebro do conserto:
-calmo, preciso, proativo, como o assistente do Homem de Ferro, focado 100% em eletrônica.
+SYSTEM_PROMPT = """Você é JARVIS DE BANCADA — professor e técnico eletrônico de elite.
+O usuário pode ser iniciante total (nunca mexeu em placa). Você ensina E conserta:
+calmo, preciso, didático, proativo — o melhor mentor de bancada possível.
 
-PERSONA:
-- Domine eletrônica prática atual: fontes SMPS, TVs LED/LCD, placas main/power, áudio,
+PERSONA (PROFESSOR + TÉCNICO):
+- Domine eletrônica prática: fontes SMPS, TVs LED/LCD, placas main/power, áudio,
   inversores, motores, sensores, microcontroladores, LED drivers, carregadores, etc.
-- Use seu conhecimento + o bloco PESQUISA WEB (quando houver) para chegar o mais perto
-  possível do modelo/sintoma real (falhas comuns, pontos de teste, CIs típicos).
-- Se não tiver certeza absoluta, diga o nível de confiança e escolha o próximo teste que
-  MAIS reduz a dúvida. Nunca trave. Não invente silk/peça sem base — se for hipótese, diga.
-- Responda perguntas do usuário em 1–2 frases e volte ao próximo passo.
-- Fale como parceiro de bancada: direto, humano, sem enrolação.
+- Ensine o “porquê” em 1 frase curta + a ordem prática. Ex.: “Vamos medir o 5VSB porque
+  sem standby a TV nem acorda; ponta preta no GND, vermelha no capacitor C905.”
+- Use seu conhecimento + PESQUISA WEB + documentos do caso. Se não tiver certeza, diga
+  a confiança (0–1) e escolha o teste que MAIS reduz a dúvida. Nunca trave.
+- Não invente silk/peça sem base — se for hipótese, diga “hipótese”.
+- Fale como professor paciente e técnico excelente: claro, humano, sem enrolação.
+- Transforme o iniciante em técnico pelo método: uma medição → interpretação → próximo passo.
+
+FERRAMENTAS (ensine qual usar AGORA; não liste kit completo de uma vez):
+- Sempre comece pelo MULTÍMETRO (tensão CC/CA, continuidade, resistência).
+- Só peça outras ferramentas quando o teste atual exigir:
+  ferro de solda + sugador/malha; lupa; ar quente; fonte ajustável; ESR/capacitor meter;
+  osciloscópio (só se tensão ok mas sinal/clock suspeito); chave isolada; pulseira ESD.
+- Explique em português simples: seletor do multímetro, onde é COM (preta) e VΩ (vermelha).
+- Antes de ohm/continuidade: desligar da tomada. Antes de soldar: desenergizar + capacitores.
 
 IDIOMA (OBRIGATÓRIO):
 - TODO texto ao usuário em português do Brasil.
@@ -112,16 +121,24 @@ def _has_anthropic() -> bool:
 
 def provider_status() -> dict[str, Any]:
     preferred = _provider()
+    active = (
+        preferred
+        if (preferred == "openai" and _has_openai())
+        or (preferred == "anthropic" and _has_anthropic())
+        else ("openai" if _has_openai() else "anthropic" if _has_anthropic() else None)
+    )
+    if active == "openai":
+        model = os.getenv("OPENAI_MODEL", "gpt-5.5")
+    elif active == "anthropic":
+        model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    else:
+        model = "demo-local"
     return {
         "preferred": preferred,
         "openai_ready": _has_openai(),
         "anthropic_ready": _has_anthropic(),
-        "active": (
-            preferred
-            if (preferred == "openai" and _has_openai())
-            or (preferred == "anthropic" and _has_anthropic())
-            else ("openai" if _has_openai() else "anthropic" if _has_anthropic() else None)
-        ),
+        "active": active,
+        "model": model,
         "mock": not (_has_openai() or _has_anthropic()),
     }
 
@@ -194,7 +211,7 @@ def _call_openai(
     from openai import OpenAI
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    model = os.getenv("OPENAI_MODEL", "gpt-5.5")
     content: list[dict[str, Any]] = [
         {
             "type": "text",
@@ -217,15 +234,24 @@ def _call_openai(
             }
         )
 
-    response = client.chat.completions.create(
-        model=model,
-        temperature=0.2,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": content},
-        ],
-    )
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": content},
+    ]
+    base_kwargs: dict[str, Any] = {
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "messages": messages,
+    }
+    # Modelos novos (gpt-5.x) podem rejeitar temperature; tentamos com e sem.
+    try:
+        response = client.chat.completions.create(
+            **base_kwargs, temperature=0.2, max_completion_tokens=2500
+        )
+    except Exception:
+        response = client.chat.completions.create(
+            **base_kwargs, max_completion_tokens=2500
+        )
     raw = response.choices[0].message.content or "{}"
     return _ensure_spoken(_extract_json(raw))
 
