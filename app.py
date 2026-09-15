@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 # Bump this on every deploy so Cloud Run shows the update in the corner.
-APP_VERSION = "v2.2.2-stable"
+APP_VERSION = "v2.2.3-stable"
 from agent.diagnostic import DiagnosticAgent
 from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
@@ -31,7 +31,7 @@ from agent.hud_modules import (
     render_music_dock,
     render_zone_modules,
 )
-from agent.self_heal import mount_self_heal_bridge, render_heal_panel
+from agent.self_heal import render_heal_panel  # noqa: F401 — reservado dev
 from agent.event_bus import mount_event_bus, refresh_token
 from agent.agent_tools import format_actions_for_user
 from agent.voice import extract_intake_from_speech, speak_text, transcribe_audio
@@ -819,20 +819,21 @@ def top_menu() -> str:
     keys = list(labels.keys())
     if st.session_state.get("nav") not in keys:
         st.session_state.nav = "bancada"
-    # Inicializa o widget uma vez — NÃO sobrescrever nav_segment em todo rerun
-    # (isso anulava o clique do utilizador).
-    if "nav_segment" not in st.session_state:
-        st.session_state.nav_segment = st.session_state.nav
-    chosen = st.segmented_control(
-        "Navegação",
-        options=keys,
-        format_func=lambda k: labels[k],
-        key="nav_segment",
-        label_visibility="collapsed",
-        width="stretch",
-    )
-    if chosen in keys:
-        st.session_state.nav = chosen
+    # Botões com key estável — clique confiável (segmented_control falhava no HUD).
+    cols = st.columns(len(keys), gap="small")
+    for col, key in zip(cols, keys):
+        with col:
+            active = st.session_state.nav == key
+            if st.button(
+                labels[key],
+                key=f"nav_btn_{key}",
+                type="primary" if active else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state.nav = key
+                st.rerun()
+    # Compat: mantém nav_segment alinhado para atalhos antigos
+    st.session_state.nav_segment = st.session_state.nav
     cascade = {
         "bancada": ["CHAT", "MÓDULOS", "MIC", "MÍDIA"],
         "casos": ["ABERTOS", "RESOLVIDOS", "RETOMAR"],
