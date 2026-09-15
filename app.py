@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 # Bump this on every deploy so Cloud Run shows the update in the corner.
-APP_VERSION = "v2.2.3-stable"
+APP_VERSION = "v2.2.4-stable"
 from agent.diagnostic import DiagnosticAgent
 from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
@@ -456,7 +456,7 @@ div[data-testid="element-container"]:has(.hud-overlay) {
   color:#0a0f18 !important; font-family:'Orbitron',sans-serif !important;
   font-weight:800 !important; letter-spacing:.06em !important;
   box-shadow: 0 0 22px rgba(255,170,0,.35), inset 0 1px 0 rgba(255,255,255,.35) !important;
-  position: relative; z-index: 2;
+  position: relative; z-index: 120;
   pointer-events: auto !important;
   text-transform: uppercase !important;
 }
@@ -868,6 +868,19 @@ def play_agent_voice(text: str) -> None:
         st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
 
 
+def queue_agent_voice(text: str) -> None:
+    """Agenda TTS para o próximo rerun — não bloqueia a UI (anti-travamento)."""
+    if not st.session_state.get("voice_out") or not (text or "").strip():
+        return
+    st.session_state["_pending_tts"] = (text or "").strip()
+
+
+def flush_pending_voice() -> None:
+    pending = st.session_state.pop("_pending_tts", None)
+    if pending:
+        play_agent_voice(pending)
+
+
 def _esc_html(text: object) -> str:
     s = str(text or "")
     return (
@@ -1023,7 +1036,7 @@ def submit_user_turn(
             )
         except Exception:
             pass
-        play_agent_voice(spoken)
+        queue_agent_voice(spoken)
         st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
         st.session_state.agent_speaking = False
         st.rerun()
@@ -1042,7 +1055,7 @@ def submit_user_turn(
             )
         except Exception:
             pass
-        play_agent_voice(spoken)
+        queue_agent_voice(spoken)
         st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
         st.session_state.agent_speaking = False
         st.rerun()
@@ -1084,7 +1097,7 @@ def submit_user_turn(
             flashes.append(f"⚙️ {note}")
     if flashes:
         st.session_state["_flash_notice"] = " · ".join(flashes)
-    play_agent_voice(result.get("spoken_reply") or result.get("message") or "")
+    queue_agent_voice(result.get("spoken_reply") or result.get("message") or "")
     st.rerun()
 
 
@@ -1935,7 +1948,6 @@ def case_view(ag: DiagnosticAgent) -> None:
 
 def main() -> None:
     ensure_session()
-    # Self-heal: captura erros JS e injeta em session_state (sempre montado).
     # Self-heal desligado no pai — capturava removeChild do React e piorava a UI.
     mount_event_bus()
     inject_hud()
@@ -1967,6 +1979,9 @@ def main() -> None:
             submit_user_turn(ag, case, pending)
             return
         open_chat_view(ag)
+
+    # TTS depois da UI — chat/abas já pintaram; voz não trava a resposta.
+    flush_pending_voice()
 
 
 if __name__ == "__main__":

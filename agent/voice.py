@@ -115,7 +115,10 @@ def _speak_edge(clean: str) -> bytes:
         out.unlink(missing_ok=True)
         return data
 
-    return asyncio.run(_run())
+    try:
+        return asyncio.run(asyncio.wait_for(_run(), timeout=8.0))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"edge-tts timeout/falha: {exc}") from exc
 
 
 def _for_speech(text: str) -> str:
