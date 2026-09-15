@@ -9,3 +9,4 @@ ddgs>=9.0.0
 pypdf>=5.0.0
 edge-tts>=6.1.0
 psutil>=6.0.0
+google-cloud-storage>=2.18.0

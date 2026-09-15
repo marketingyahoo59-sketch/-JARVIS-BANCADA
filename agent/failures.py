@@ -32,6 +32,11 @@ def _save(items: list[dict[str, Any]]) -> None:
     BANK_DIR.mkdir(parents=True, exist_ok=True)
     with BANK_PATH.open("w", encoding="utf-8") as fh:
         json.dump(items, fh, ensure_ascii=False, indent=2)
+    try:
+        from .gcs_sync import push_path
+        push_path(BANK_PATH)
+    except Exception:
+        pass
 
 
 def _norm(text: str) -> str:

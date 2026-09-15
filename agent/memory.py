@@ -98,6 +98,11 @@ class CaseMemory:
         path = self.path_for(case["case_id"])
         with path.open("w", encoding="utf-8") as fh:
             json.dump(case, fh, ensure_ascii=False, indent=2)
+        try:
+            from .gcs_sync import push_path
+            push_path(path)
+        except Exception:
+            pass
 
     def list_cases(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []

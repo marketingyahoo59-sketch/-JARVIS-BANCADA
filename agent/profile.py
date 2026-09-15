@@ -86,6 +86,11 @@ def save_profile(profile: dict[str, Any]) -> None:
         json.dumps(merged, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    try:
+        from .gcs_sync import push_path
+        push_path(PROFILE_PATH)
+    except Exception:
+        pass
 
 
 def list_presets() -> list[dict[str, Any]]:

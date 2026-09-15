@@ -4,10 +4,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Padrão Cloud Run (disco tmp + sync GCS). No Railway sobrescreva JARVIS_DATA_DIR=/data
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8080 \
-    JARVIS_DATA_DIR=/data \
+    JARVIS_DATA_DIR=/tmp/jarvis-data \
     JARVIS_TTS=edge
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,8 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Volume Railway monta em /data (SQLite, casos, fotos)
-RUN mkdir -p /data/cases /data/uploads /data/brain /data/failures /data/docs /data/sensors
+RUN mkdir -p /tmp/jarvis-data /data
 
 EXPOSE 8080
 

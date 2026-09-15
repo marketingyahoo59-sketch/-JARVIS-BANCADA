@@ -7,9 +7,7 @@ import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-
 
 from .paths import LEARNING_DB as DB_PATH, ensure_data_dirs
 
@@ -89,6 +87,12 @@ def remember_resolution(
             ),
         )
         conn.commit()
+    try:
+        from .gcs_sync import push_path
+
+        push_path(DB_PATH)
+    except Exception:
+        pass
     return {
         "id": entry_id,
         "at": created,
@@ -168,7 +172,9 @@ def learned_as_context(board_model: str, symptom: str = "") -> str:
     return "\n".join(lines)
 
 
-def build_diagnostic_map(board_model: str, symptom: str, research_blurb: str = "") -> dict[str, Any]:
+def build_diagnostic_map(
+    board_model: str, symptom: str, research_blurb: str = ""
+) -> dict[str, Any]:
     """Mapa de diagnóstico em 3 passos (visão → básico → componentes)."""
     device = board_model or "aparelho"
     sym = symptom or "sintoma não informado"

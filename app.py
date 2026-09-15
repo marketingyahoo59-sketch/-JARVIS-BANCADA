@@ -31,9 +31,12 @@ st.set_page_config(
 )
 
 from agent.paths import CASES_DIR as DATA_DIR, UPLOADS_DIR as UPLOAD_DIR, ensure_data_dirs
+from agent.gcs_sync import gcs_enabled, pull_from_gcs, push_path, status_line
 
 ensure_data_dirs()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# Cloud Run: restaura SQLite/fotos do bucket GCS no boot do processo
+_GCS_BOOT = pull_from_gcs() if gcs_enabled() else ""
 
 STATUS_PT = {
     "intake": "abertura",
@@ -662,6 +665,10 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                     st.session_state.last_image_bytes = image_bytes
                     st.session_state.last_image_name = image_name
                     (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                    try:
+                        push_path(UPLOAD_DIR / f"{case['case_id']}_{image_name}")
+                    except Exception:
+                        pass
                     if not text:
                         text = "Analise a foto e diga o próximo passo."
                 if text:
@@ -695,6 +702,10 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                         image_name = photo.name
                         image_mime = photo.type or "image/jpeg"
                         (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                        try:
+                            push_path(UPLOAD_DIR / f"{case['case_id']}_{image_name}")
+                        except Exception:
+                            pass
                     submit_user_turn(
                         ag,
                         case,
@@ -936,6 +947,7 @@ def page_config() -> None:
 
 
 def page_sistemas(ag: DiagnosticAgent) -> None:
+    st.caption(status_line())
     info = ag.provider_info()
     profile = load_profile()
     who = address_user(profile)
@@ -1279,6 +1291,10 @@ def case_view(ag: DiagnosticAgent) -> None:
                         st.session_state.last_image_bytes = image_bytes
                         st.session_state.last_image_name = image_name
                         (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                        try:
+                            push_path(UPLOAD_DIR / f"{case['case_id']}_{image_name}")
+                        except Exception:
+                            pass
                     submit_user_turn(
                         ag,
                         case,
@@ -1305,6 +1321,10 @@ def case_view(ag: DiagnosticAgent) -> None:
                         st.session_state.last_image_bytes = image_bytes
                         st.session_state.last_image_name = image_name
                         (UPLOAD_DIR / f"{case['case_id']}_{image_name}").write_bytes(image_bytes)
+                        try:
+                            push_path(UPLOAD_DIR / f"{case['case_id']}_{image_name}")
+                        except Exception:
+                            pass
                     submit_user_turn(
                         ag,
                         case,

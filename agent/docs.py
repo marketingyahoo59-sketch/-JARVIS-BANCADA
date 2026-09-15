@@ -17,6 +17,11 @@ def save_case_doc(case_id: str, filename: str, data: bytes) -> Path:
     safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in filename)[:120]
     path = folder / safe
     path.write_bytes(data)
+    try:
+        from .gcs_sync import push_path
+        push_path(path)
+    except Exception:
+        pass
     return path
 
 

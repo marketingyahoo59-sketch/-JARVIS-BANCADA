@@ -4,7 +4,8 @@ Cérebro de Engenharia Eletrônica (Streamlit): Jarvis livre + Modo Mestre Técn
 
 **Online (Render Free — pode dormir):** https://jarvis-bancada.onrender.com/
 
-**Recomendado para bancada real:** [Railway com Volume](deploy/RAILWAY.md) — resposta rápida + SQLite/fotos permanentes.
+**Grátis no Google (paga se passar da cota):** [Cloud Run + bucket GCS](deploy/CLOUDRUN.md)  
+**Rápido + disco fixo:** [Railway Volume](deploy/RAILWAY.md)
 
 ## O que faz
 
