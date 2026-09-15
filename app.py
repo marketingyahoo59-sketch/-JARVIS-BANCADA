@@ -30,6 +30,7 @@ from agent.hud_modules import (
     render_zone_modules,
 )
 from agent.self_heal import mount_self_heal_bridge, render_heal_panel
+from agent.event_bus import mount_event_bus, refresh_token
 from agent.agent_tools import format_actions_for_user
 from agent.voice import extract_intake_from_speech, speak_text, transcribe_audio
 
@@ -1862,6 +1863,7 @@ def main() -> None:
     ensure_session()
     # Self-heal: captura erros JS e injeta em session_state (sempre montado).
     mount_self_heal_bridge()
+    mount_event_bus()
     inject_hud()
     ag = get_agent()
     nav = top_menu()

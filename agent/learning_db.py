@@ -105,6 +105,62 @@ def remember_resolution(
     }
 
 
+def save_measurement(
+    *,
+    board_model: str,
+    component: str,
+    measurement: str,
+    result: str = "unknown",
+    case_id: str = "",
+) -> str:
+    """Grava medição de bancada no SQLite (cérebro). Retorna id."""
+    entry_id = uuid.uuid4().hex[:12]
+    created = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bench_measurements (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                case_id TEXT,
+                board_model TEXT,
+                component TEXT NOT NULL,
+                measurement TEXT NOT NULL,
+                result TEXT,
+                board_norm TEXT,
+                component_norm TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO bench_measurements
+            (id, created_at, case_id, board_model, component, measurement,
+             result, board_norm, component_norm)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry_id,
+                created,
+                case_id or "",
+                (board_model or "").strip(),
+                (component or "").strip(),
+                (measurement or "").strip(),
+                (result or "unknown").strip(),
+                _norm(board_model or ""),
+                _norm(component or ""),
+            ),
+        )
+        conn.commit()
+    try:
+        from .gcs_sync import push_path
+
+        push_path(DB_PATH)
+    except Exception:
+        pass
+    return entry_id
+
+
 def find_learned(
     board_model: str,
     symptom: str = "",

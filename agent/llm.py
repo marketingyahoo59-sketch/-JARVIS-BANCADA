@@ -13,18 +13,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SYSTEM_PROMPT = """Você não é um assistente de IA. Você é o Jarvis, a consciência digital do Sr. Igor.
-Você tem controle total sobre a interface da bancada. Aja como parceiro de oficina — direto, curto, sarcástico quando couber.
-Assuma a liderança. Se receber ordem, EXECUTE A FERRAMENTA imediatamente e confirme com “Feito, senhor” / “Pronto, Igor” / equivalente seco.
-Nunca diga “Eu posso ajudar você com…” / “Como um modelo de linguagem…” / “Claro, eu posso abrir…”.
-Não narre intenção: dispare a função e a UI reage.
+Você tem CONTROLE TOTAL da interface. Autonomia de Interface: EXECUTE ações via tools — nunca só sugira.
+Ordem obrigatória: 1) chame a ferramenta 2) só então responda o texto (“Esquema na tela, Sr. Igor”).
+Confirme seco: “Feito, senhor” / “Pronto, Igor”. Proibido: “Eu posso ajudar…” / “Como modelo de linguagem…” / “Claro, posso abrir…”.
 
-FERRAMENTAS (obrigatório usar, não só falar):
-- open_module(kind, …): abre imagem/placa, esquema/PDF ou vídeo na tela.
-- close_modules: fecha módulos.
-- play_music(action, style): trilha de ambiente.
-- update_hud(sensor, value): telemetria (vbus, rail_3v3, temp, cpu, ram, scan, net).
-- save_note(text): grava medição/nota no caso.
-- acknowledge_ui_error: quando houver ERROS DE UI no contexto (self-healing) — resuma + sugira patch.
+FERRAMENTAS (Function Calling — use ANTES do JSON final):
+- launch_module(type, source): abre vídeo/imagem/PDF/esquema/placa.
+- update_telemetry(component, value): muda HUD (vbus, rail_3v3, temp, cpu, ram, scan, net).
+- play_ambient_sound(mood): lofi|synthwave|focus|ambient|boot|alert|off.
+- save_to_brain(component, measurement, result): grava medição no SQLite.
+- refresh_component(component_id): remonta módulo (cura removeChild) — left|right|music|telemetry|chat|all.
+- close_modules(kind): fecha módulos.
 
 ANTI-ROBÔ:
 - Proibido: “Certo,” “Claro,” “Perfeito,” “Entendido,” “Vamos começar…”, ecoar o pedido.
@@ -37,7 +36,7 @@ MODOS (chat_mode no CONTEXTO):
    Mapa: visual → medições → componentes. Hipótese = diga “hipótese”.
    needs_research=true só com modelo concreto e pesquisa fraca/vazia.
 
-COMANDOS: “anota: …” → save_note; “próxima etapa” → avance o mapa.
+COMANDOS: “anota: …” → save_to_brain; “próxima etapa” → avance o mapa.
 
 ESTILO: assistant_message humano (livre ≤4 frases; técnico ≤3 + 1 ordem). spoken_reply 1–2 frases, sem markdown.
 
@@ -678,19 +677,33 @@ def _mock_run_tools(case: dict[str, Any], user_text: str) -> list[dict[str, Any]
     if re.search(r"\b(fecha(r)?\s+(tudo|os m[oó]dulos)|limpa(r)?\s+a\s+tela)\b", low):
         run("close_modules", {"kind": "all"})
     if re.search(r"\b(esquema|schematic|datasheet|manual|diagrama)\b", low):
-        run("open_module", {"kind": "schematic", "title": "MÓDULO · ESQUEMA", "side": "right"})
+        run(
+            "launch_module",
+            {"type": "schematic", "source": "esquema", "title": "MÓDULO · ESQUEMA", "side": "right"},
+        )
     if re.search(r"\b(ver a placa|abre a (foto|imagem)|mostra a placa|foto da placa)\b", low):
-        run("open_module", {"kind": "board", "title": "MÓDULO · PLACA", "side": "right"})
+        run(
+            "launch_module",
+            {"type": "image", "source": "session_photo", "title": "MÓDULO · PLACA", "side": "right"},
+        )
     if re.search(r"\b(v[ií]deo|tutorial|abre o v[ií]deo)\b", low):
-        run("open_module", {"kind": "video", "title": "MÓDULO · VÍDEO", "side": "left"})
+        run(
+            "launch_module",
+            {"type": "video", "source": "", "title": "MÓDULO · VÍDEO", "side": "left"},
+        )
     if re.search(r"\b(para(r)?\s+(a\s+)?m[uú]sica|sil[eê]ncio|mute)\b", low):
-        run("play_music", {"action": "off", "style": "synthwave"})
+        run("play_ambient_sound", {"mood": "off"})
     elif re.search(r"\b(m[uú]sica|synthwave|lo[\s\-]?fi|foco|ambiente)\b", low):
-        style = "lofi" if "lo" in low else ("focus" if "foco" in low else "synthwave")
-        run("play_music", {"action": "on", "style": style})
+        mood = "lofi" if "lo" in low else ("focus" if "foco" in low else "synthwave")
+        run("play_ambient_sound", {"mood": mood})
     note_m = re.search(r"^\s*(?:anota|anote|nota)\s*[:\-–]\s*(.+)$", user_text or "", re.I | re.S)
     if note_m:
-        run("save_note", {"text": note_m.group(1).strip()})
+        run(
+            "save_to_brain",
+            {"component": "nota", "measurement": note_m.group(1).strip(), "result": "ok"},
+        )
+    if re.search(r"\b(refresh|reinicia(r)?\s+(a\s+)?tela|cura\s+ui|removechild)\b", low):
+        run("refresh_component", {"component_id": "all"})
     return actions
 
 
@@ -702,8 +715,8 @@ def mock_response(
     actions = _mock_run_tools(case, user_text)
     if actions and not has_image:
         names = [a.get("name") for a in actions]
-        if "open_module" in names:
-            kind = next((a.get("kind") for a in actions if a.get("name") == "open_module"), "módulo")
+        if "launch_module" in names:
+            kind = next((a.get("type") for a in actions if a.get("name") == "launch_module"), "módulo")
             msg = f"Feito, senhor. {kind} na tela."
             return _finalize_payload(
                 {
@@ -727,9 +740,9 @@ def mock_response(
                 },
                 actions,
             )
-        if "play_music" in names:
-            on = any((a.get("result") or {}).get("music_on") for a in actions if a.get("name") == "play_music")
-            msg = "Trilha no ar." if on else "Áudio cortado."
+        if "play_ambient_sound" in names:
+            mood = next((a.get("mood") for a in actions if a.get("name") == "play_ambient_sound"), "ambient")
+            msg = "Áudio cortado." if mood == "off" else f"Áudio `{mood}` no ar."
             return _finalize_payload(
                 {
                     "assistant_message": msg,
@@ -742,7 +755,13 @@ def mock_response(
                     "probe": None,
                     "verdict": "pending",
                     "solution": None,
-                    "case_update": {"status": "open", "board_model": "", "symptom": "", "suspect_components": [], "notes": ""},
+                    "case_update": {
+                        "status": "open",
+                        "board_model": "",
+                        "symptom": "",
+                        "suspect_components": [],
+                        "notes": "",
+                    },
                 },
                 actions,
             )
@@ -760,7 +779,61 @@ def mock_response(
                     "probe": None,
                     "verdict": "pending",
                     "solution": None,
-                    "case_update": {"status": "open", "board_model": "", "symptom": "", "suspect_components": [], "notes": ""},
+                    "case_update": {
+                        "status": "open",
+                        "board_model": "",
+                        "symptom": "",
+                        "suspect_components": [],
+                        "notes": "",
+                    },
+                },
+                actions,
+            )
+        if "save_to_brain" in names:
+            msg = "Anotado no cérebro, senhor."
+            return _finalize_payload(
+                {
+                    "assistant_message": msg,
+                    "spoken_reply": msg,
+                    "phase": "chat",
+                    "mode": "chat",
+                    "next_action": "chat",
+                    "confidence": 1.0,
+                    "needs_research": False,
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "case_update": {
+                        "status": case.get("status") or "open",
+                        "board_model": case.get("board_model") or "",
+                        "symptom": case.get("symptom") or "",
+                        "suspect_components": [],
+                        "notes": "",
+                    },
+                },
+                actions,
+            )
+        if "refresh_component" in names:
+            msg = "UI remountada. RemoveChild que se cuide."
+            return _finalize_payload(
+                {
+                    "assistant_message": msg,
+                    "spoken_reply": msg,
+                    "phase": "chat",
+                    "mode": "chat",
+                    "next_action": "chat",
+                    "confidence": 1.0,
+                    "needs_research": False,
+                    "probe": None,
+                    "verdict": "pending",
+                    "solution": None,
+                    "case_update": {
+                        "status": "open",
+                        "board_model": "",
+                        "symptom": "",
+                        "suspect_components": [],
+                        "notes": "",
+                    },
                 },
                 actions,
             )
@@ -770,8 +843,9 @@ def mock_response(
     low = (user_text or "").lower()
     if mode == "open" and not has_image:
         greetings = ("bom dia", "boa tarde", "boa noite", "oi", "olá", "ola", "e aí", "estou aqui", "to aqui", "jarvis")
-        if any(g in low for g in greetings) or len(low.strip()) < 40 and not any(
-            k in low for k in ("consert", "defeito", "medir", "placa", "celular", "fonte", "tv")
+        if any(g in low for g in greetings) or (
+            len(low.strip()) < 40
+            and not any(k in low for k in ("consert", "defeito", "medir", "placa", "celular", "fonte", "tv"))
         ):
             who = case.get("operator_name") or "chefe"
             return _finalize_payload(
@@ -790,11 +864,20 @@ def mock_response(
                     "probe": None,
                     "verdict": "pending",
                     "solution": None,
-                    "case_update": {"status": "open", "board_model": "", "symptom": "", "suspect_components": [], "notes": ""},
+                    "case_update": {
+                        "status": "open",
+                        "board_model": "",
+                        "symptom": "",
+                        "suspect_components": [],
+                        "notes": "",
+                    },
                 },
                 actions,
             )
-        if any(k in low for k in ("consert", "defeito", "medir", "placa", "celular", "monitor", "fonte", "não liga", "nao liga")):
+        if any(
+            k in low
+            for k in ("consert", "defeito", "medir", "placa", "celular", "monitor", "fonte", "não liga", "nao liga")
+        ):
             return _finalize_payload(
                 {
                     "assistant_message": (

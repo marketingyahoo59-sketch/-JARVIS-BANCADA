@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+        font-family: Rajdhani, Orbitron, sans-serif;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        min-height: 28px;
+        pointer-events: none;
+      }
+      .toast {
+        pointer-events: none;
+        display: inline-block;
+        margin: 2px 6px;
+        padding: 4px 10px;
+        border: 1px solid rgba(0, 242, 255, 0.45);
+        background: rgba(0, 20, 40, 0.82);
+        color: #00f2ff;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-radius: 6px;
+        box-shadow: 0 0 12px rgba(0, 242, 255, 0.25);
+        animation: pop 0.35s ease-out;
+      }
+      .toast.warn {
+        color: #ffaa00;
+        border-color: rgba(255, 170, 0, 0.5);
+      }
+      .toast.ok {
+        color: #88ffcc;
+      }
+      @keyframes pop {
+        from {
+          opacity: 0;
+          transform: translateY(-6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .telem {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 2px;
+      }
+      .telem span {
+        color: #8fb6d8;
+        font-size: 10px;
+        letter-spacing: 0.06em;
+      }
+      .telem b {
+        color: #00f2ff;
+        margin-left: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="toasts"></div>
+      <div class="telem" id="telem"></div>
+    </div>
+    <script>
+      (function () {
+        function sendMessage(type, data) {
+          var msg = Object.assign({ isStreamlitMessage: true, type: type }, data || {});
+          window.parent.postMessage(msg, "*");
+        }
+        function setFrameHeight(h) {
+          sendMessage("streamlit:setFrameHeight", { height: h });
+        }
+        function componentReady() {
+          sendMessage("streamlit:componentReady", { apiVersion: 1 });
+        }
+        function setComponentValue(value) {
+          sendMessage("streamlit:setComponentValue", { value: value });
+        }
+
+        var toasts = document.getElementById("toasts");
+        var telemEl = document.getElementById("telem");
+        var seen = {};
+
+        function beep(freq, ms, type) {
+          try {
+            var Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            var ctx = new Ctx();
+            var o = ctx.createOscillator();
+            var g = ctx.createGain();
+            o.type = type || "sine";
+            o.frequency.value = freq;
+            g.gain.value = 0.04;
+            o.connect(g);
+            g.connect(ctx.destination);
+            o.start();
+            setTimeout(function () {
+              o.stop();
+              ctx.close();
+            }, ms || 120);
+          } catch (e) {}
+        }
+
+        function pushToast(text, cls) {
+          var el = document.createElement("div");
+          el.className = "toast " + (cls || "");
+          el.textContent = text;
+          toasts.appendChild(el);
+          setTimeout(function () {
+            if (el.parentNode) el.parentNode.removeChild(el);
+            setFrameHeight(Math.max(28, document.getElementById("root").offsetHeight));
+          }, 4200);
+        }
+
+        function renderTelem(t) {
+          t = t || {};
+          var keys = Object.keys(t);
+          if (!keys.length) {
+            telemEl.innerHTML = "";
+            return;
+          }
+          telemEl.innerHTML = keys
+            .slice(0, 8)
+            .map(function (k) {
+              return "<span>" + k.toUpperCase() + "<b>" + String(t[k]) + "</b></span>";
+            })
+            .join("");
+        }
+
+        function applyEvent(ev) {
+          if (!ev || !ev.id || seen[ev.id]) return;
+          seen[ev.id] = true;
+          var type = ev.type || "";
+          var p = ev.payload || {};
+          if (type === "launch_module") {
+            pushToast("Módulo · " + (p.type || p.kind || "UI") + " online", "ok");
+            beep(880, 90, "triangle");
+          } else if (type === "close_modules") {
+            pushToast("Módulos recolhidos");
+            beep(220, 80);
+          } else if (type === "play_ambient_sound") {
+            pushToast("Áudio · " + (p.mood || "ambient"), "ok");
+            beep(440, 70);
+          } else if (type === "update_telemetry") {
+            pushToast(
+              "Telemetria · " + (p.component || "?") + " = " + (p.value || ""),
+              "ok"
+            );
+            beep(660, 50, "square");
+          } else if (type === "save_to_brain") {
+            pushToast("Cérebro · medição salva", "ok");
+            beep(520, 100);
+          } else if (type === "refresh_component") {
+            pushToast("Refresh · " + (p.component_id || "ui"), "warn");
+            beep(180, 140, "sawtooth");
+          } else if (type === "ui_error_ack") {
+            pushToast("Self-heal · erro reconhecido", "warn");
+          } else {
+            pushToast(type || "evento");
+          }
+        }
+
+        function onRender(data) {
+          try {
+            var payload =
+              typeof data === "string" ? JSON.parse(data || "{}") : data || {};
+            var events = payload.events || [];
+            for (var i = 0; i < events.length; i++) applyEvent(events[i]);
+            renderTelem(payload.telemetry || {});
+            setFrameHeight(Math.max(28, document.getElementById("root").offsetHeight + 4));
+            if (events.length) {
+              setComponentValue({ applied: events.length, at: Date.now() });
+            }
+          } catch (e) {
+            pushToast("event bus fault", "warn");
+          }
+        }
+
+        window.addEventListener("message", function (e) {
+          var d = e.data;
+          if (!d || d.type !== "streamlit:render") return;
+          var args = (d.args && d.args.data) || d.args || {};
+          if (typeof args === "object" && args.data !== undefined) onRender(args.data);
+          else onRender(args);
+        });
+
+        componentReady();
+        setFrameHeight(28);
+      })();
+    </script>
+  </body>
+</html>

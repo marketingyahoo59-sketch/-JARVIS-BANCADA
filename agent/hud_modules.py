@@ -281,9 +281,13 @@ boot();
 
 
 def render_module_card(mod: dict[str, Any]) -> None:
+    from .event_bus import refresh_token
+
     kind = mod.get("kind")
     title = mod.get("title") or "MÓDULO"
     payload = mod.get("payload") or {}
+    side = str(mod.get("side") or "right")
+    tok = refresh_token(side)
     st.markdown(
         f'<div class="j-module pop-in"><div class="j-module-bar"><span>{title}</span>'
         f'<span class="j-module-id">{mod.get("id", "")}</span></div>',
@@ -335,7 +339,11 @@ def render_module_card(mod: dict[str, Any]) -> None:
     else:
         st.caption(str(payload))
 
-    if st.button("Fechar módulo", key=f"close_mod_{mod.get('id')}", use_container_width=True):
+    if st.button(
+        "Fechar módulo",
+        key=f"close_mod_{mod.get('id')}_r{tok}",
+        use_container_width=True,
+    ):
         close_modules(kind=kind, side=mod.get("side"))
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
