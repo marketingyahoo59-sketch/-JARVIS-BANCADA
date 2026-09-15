@@ -14,6 +14,8 @@ from pathlib import Path
 
 import streamlit as st
 
+# Bump this on every deploy so Cloud Run shows the update in the corner.
+APP_VERSION = "v2.1.0-agent"
 from agent.diagnostic import DiagnosticAgent
 from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
@@ -255,6 +257,26 @@ div[data-testid="element-container"]:has(.hud-overlay) {
   opacity:.5;
   mask-image: linear-gradient(180deg, rgba(0,0,0,.55), transparent 90%);
 }
+
+.j-version {
+  position: fixed;
+  right: 14px;
+  bottom: 12px;
+  z-index: 9999;
+  pointer-events: none;
+  font-family: 'Orbitron', monospace;
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: #00f2ff;
+  background: rgba(0, 12, 28, .88);
+  border: 1px solid rgba(0, 242, 255, .45);
+  border-radius: 6px;
+  padding: 5px 10px;
+  box-shadow: 0 0 14px rgba(0, 242, 255, .25);
+  text-transform: uppercase;
+}
+.j-version b { color: #ffaa00; margin-left: 6px; font-weight: 600; }
+
 @keyframes jpulse {
   0%,100% { box-shadow: 0 0 0 1px rgba(255,170,0,.12), 0 0 28px rgba(0,242,255,.15), inset 0 0 40px rgba(0,242,255,.04); }
   50% { box-shadow: 0 0 0 1px rgba(0,242,255,.45), 0 0 40px rgba(0,242,255,.28), inset 0 0 48px rgba(255,170,0,.06); }
@@ -760,6 +782,7 @@ def top_menu() -> str:
             <div class="j-ring"><b>{scan_pct}%</b><span>SCAN</span></div>
           </div>
         </div>
+        <div class="j-version">BUILD <b>{APP_VERSION}</b></div>
         """,
         unsafe_allow_html=True,
     )
