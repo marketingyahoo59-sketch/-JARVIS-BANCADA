@@ -77,8 +77,8 @@ header[data-testid="stHeader"] { background: transparent !important; }
 }
 
 .j-shell {
-  position: sticky; top: 0; z-index: 80;
-  margin-bottom: 1rem;
+  position: relative; z-index: 1;
+  margin-bottom: .75rem;
   padding: .85rem 1rem;
   border-radius: 18px;
   border: 1px solid rgba(0,209,255,.38);
@@ -87,6 +87,7 @@ header[data-testid="stHeader"] { background: transparent !important; }
               inset 0 0 36px rgba(0,209,255,.06);
   backdrop-filter: blur(12px);
   animation: jpulse 4.8s ease-in-out infinite;
+  pointer-events: none;
 }
 @keyframes jpulse {
   0%,100% { box-shadow: 0 0 0 1px rgba(245,179,1,.14), 0 16px 48px rgba(0,0,0,.45), inset 0 0 36px rgba(0,209,255,.06); }
@@ -159,7 +160,23 @@ header[data-testid="stHeader"] { background: transparent !important; }
   color:#0a0f18 !important; font-family:'Orbitron',sans-serif !important;
   font-weight:700 !important; letter-spacing:.05em !important;
   box-shadow: 0 0 18px rgba(245,179,1,.25) !important;
+  position: relative; z-index: 2;
+  pointer-events: auto !important;
 }
+div[data-testid="stSegmentedControl"] {
+  position: relative; z-index: 90;
+  pointer-events: auto !important;
+  margin-bottom: .75rem;
+}
+div[data-testid="stSegmentedControl"] button,
+div[data-testid="stSegmentedControl"] label {
+  pointer-events: auto !important;
+  font-family:'Orbitron',sans-serif !important;
+  font-size:.72rem !important;
+  letter-spacing:.04em !important;
+}
+.j-shell { pointer-events: none; }
+.j-shell * { pointer-events: none; }
 div[data-testid="stChatMessage"] {
   background: rgba(8,18,34,.72) !important;
   border: 1px solid rgba(0,209,255,.18) !important;
@@ -344,12 +361,22 @@ def top_menu() -> str:
         "sistemas": "🛰️ Sistemas",
         "config": "⚙️ Config",
     }
-    cols = st.columns(len(labels))
-    for col, (key, label) in zip(cols, labels.items()):
-        with col:
-            if st.button(label, key=f"nav_{key}", use_container_width=True):
-                st.session_state.nav = key
-                st.rerun()
+    keys = list(labels.keys())
+    if st.session_state.get("nav") not in keys:
+        st.session_state.nav = "bancada"
+    # Mantém o widget alinhado quando outras páginas mudam session_state.nav
+    if st.session_state.get("nav_segment") != st.session_state.nav:
+        st.session_state.nav_segment = st.session_state.nav
+    chosen = st.segmented_control(
+        "Navegação",
+        options=keys,
+        format_func=lambda k: labels[k],
+        key="nav_segment",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+    if chosen:
+        st.session_state.nav = chosen
     return st.session_state.nav
 
 
@@ -707,6 +734,7 @@ def page_casos(ag: DiagnosticAgent) -> None:
     if st.button("＋ Novo caso na bancada", use_container_width=True):
         st.session_state.case_id = None
         st.session_state.nav = "bancada"
+        st.session_state.nav_segment = "bancada"
         st.rerun()
     cases = ag.list_cases()
     if not cases:
@@ -721,6 +749,7 @@ def page_casos(ag: DiagnosticAgent) -> None:
         if cols[1].button("Abrir", key=f"open_{c['case_id']}", use_container_width=True):
             st.session_state.case_id = c["case_id"]
             st.session_state.nav = "bancada"
+            st.session_state.nav_segment = "bancada"
             st.rerun()
 
 
