@@ -82,3 +82,13 @@ scripts/sensor_local.py
 scripts/test_features.py
 .github/workflows/keep-alive.yml
 ```
+
+## Deploy automático (Render)
+
+O serviço **https://jarvis-bancada.onrender.com/** está ligado ao GitHub
+`marketingyahoo59-sketch/-JARVIS-BANCADA` com **Auto-Deploy**.
+
+Cada `bash scripts/push-github.sh` (ou push para `main`) atualiza o site sozinho.
+Keep-alive: GitHub Action a cada 5 min (`.github/workflows/keep-alive.yml`).
+
+Opcional: coloque `RENDER_API_KEY` no `.env` para forçar deploy via API além do auto-deploy.
