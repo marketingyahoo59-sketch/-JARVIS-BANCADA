@@ -505,7 +505,7 @@ def intake_form(ag: DiagnosticAgent) -> None:
         with st.spinner("Abrindo enlace do caso…"):
             try:
                 intake = extract_intake_from_speech(heard)
-                board = intake.get("board_model") or intake.get("board_model") or "placa"
+                board = intake.get("board_model") or "placa"
                 symptom = intake.get("symptom") or heard
                 result = ag.start_case(board, symptom)
             except Exception as exc:  # noqa: BLE001
@@ -529,7 +529,7 @@ def intake_form(ag: DiagnosticAgent) -> None:
                             voice.getvalue(), filename=voice.name or "inicio.wav"
                         )
                         intake = extract_intake_from_speech(transcript)
-                        board = intake.get("board_model") or intake.get("board_model") or "placa"
+                        board = intake.get("board_model") or "placa"
                         symptom = intake.get("symptom") or transcript
                         result = ag.start_case(board, symptom)
                     except Exception as exc:  # noqa: BLE001
