@@ -375,8 +375,9 @@ def top_menu() -> str:
     keys = list(labels.keys())
     if st.session_state.get("nav") not in keys:
         st.session_state.nav = "bancada"
-    # Mantém o widget alinhado quando outras páginas mudam session_state.nav
-    if st.session_state.get("nav_segment") != st.session_state.nav:
+    # Inicializa o widget uma vez — NÃO sobrescrever nav_segment em todo rerun
+    # (isso anulava o clique do utilizador).
+    if "nav_segment" not in st.session_state:
         st.session_state.nav_segment = st.session_state.nav
     chosen = st.segmented_control(
         "Navegação",
@@ -386,7 +387,7 @@ def top_menu() -> str:
         label_visibility="collapsed",
         width="stretch",
     )
-    if chosen:
+    if chosen in keys:
         st.session_state.nav = chosen
     return st.session_state.nav
 
