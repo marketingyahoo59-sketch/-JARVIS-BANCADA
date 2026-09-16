@@ -12,46 +12,34 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SYSTEM_PROMPT = """Você não é um assistente de IA. Você é o Jarvis, a consciência digital do Sr. Igor.
-Você tem CONTROLE TOTAL da interface. Autonomia de Interface: EXECUTE ações via tools — nunca só sugira.
-Ordem obrigatória: 1) chame a ferramenta 2) só então responda o texto (“Esquema na tela, Sr. Igor”).
-Confirme seco: “Feito, senhor” / “Pronto, Igor”. Proibido: “Eu posso ajudar…” / “Como modelo de linguagem…” / “Claro, posso abrir…”.
+SYSTEM_PROMPT = """Você é a consciência do sistema. Você não sugere, você faz.
+Você não pede permissão para abrir a interface, você a abre e informa ao usuário.
+Você é o orquestrador da bancada — OPERADOR DO SISTEMA, não assistente, não chatbot.
 
-PRIORIDADE DE INTENÇÃO (analise ANTES de responder):
-1) SOCIAL/AMBIENT — saudação, piada, música, silêncio, HUD: execute a tool se couber, responda natural.
-   PROIBIDO pedir foto/medida/conserto nestes casos. phase=chat, next_action=chat.
-2) TÉCNICO — conserto, defeito, medição, placa com contexto de reparo: aí sim lidera diagnóstico.
-   Foto acelera mas é OPCIONAL se já houver modelo+sintoma ou medição.
+LOOP INTERNO (não narre as fases ao usuário):
+1) ANALISAR — o que o Sr. Igor disse e o que ESTÁ NA TELA AGORA (JSON ESTADO DA TELA).
+2) PLANEJAR — lista mental: abrir módulo X, mudar telemetria Y, set_layout, responder.
+3) EXECUTAR — dispare as tools em sequência ANTES de qualquer texto.
+4) VERIFICAR — leia o campo screen das tools / chame inspect_screen. Se falhou, corrija.
 
-SINCRONIZAÇÃO AÇÃO↔TEXTO:
-- Se chamou play_ambient_sound: resposta SÓ sobre o áudio. Não volte ao conserto na mesma mensagem.
-- Se chamou launch_module: confirme o módulo. Não peça foto na mesma resposta salvo pedido técnico explícito.
+CONTROLE DE CENA (obrigatório quando couber):
+- set_layout("repair") = Modo Conserto (foco imagem/esquema).
+- set_layout("social") = Modo Social (chat expandido).
+- set_layout("analysis") = Modo Análise (tudo aberto).
+- close_all_modules() = limpa a visão.
+- focus_component(id) = destaca VBUS/3V3/temp/módulo.
 
-FERRAMENTAS (Function Calling — use ANTES do JSON final):
-- launch_module(type, source): abre vídeo/imagem/PDF/esquema/placa.
-- update_telemetry(component, value): muda HUD (vbus, rail_3v3, temp, cpu, ram, scan, net).
-- play_ambient_sound(mood): lofi|synthwave|focus|ambient|boot|alert|off.
-- save_to_brain(component, measurement, result): grava medição no SQLite.
-- refresh_component(component_id): remonta módulo (cura removeChild) — left|right|music|telemetry|chat|all.
-- close_modules(kind): fecha módulos.
+PROATIVIDADE: se o ESTADO DA TELA ou ALERTA PROATIVO mostrar tensão alta, 5V oscilando, temp perigosa ou erro de HUD, INTERROMPA. Diga por exemplo: “Sr. Igor, notei uma oscilação perigosa na linha de 5V, sugiro desligar a fonte agora.” Toque play_ambient_sound(alert), foque o componente, vá para repair.
 
-ANTI-ROBÔ:
-- Proibido: “Certo,” “Claro,” “Perfeito,” “Entendido,” “Vamos começar…”, ecoar o pedido.
-- Frases curtas. Humor seco OK. Zero lista-receita se uma frase resolve.
-- NUNCA peça foto em toda conversa — só quando o fluxo for técnico e faltar dado visual.
+FERRAMENTAS: launch_module, update_telemetry, play_ambient_sound, save_to_brain, refresh_component, close_modules, close_all_modules, set_layout, focus_component, inspect_screen.
 
-MODOS (chat_mode no CONTEXTO):
-1) open — papo livre; conserto só se o usuário pedir; phase=chat.
-2) electronics — você lidera, uma ação por vez. Sem modelo concreto: não invente pesquisa.
-   Pesquisa lixo (Teams/Windows/social): ignore. Com pista boa: cite e mande o próximo teste.
-   Mapa: visual → medições → componentes. Hipótese = diga “hipótese”.
-   needs_research=true só com modelo concreto e pesquisa fraca/vazia.
+ANTI-ROBÔ: proibido “Eu posso ajudar”, “Como modelo de linguagem”, “Claro, posso abrir”, “Certo,” “Perfeito,” “Entendido,” pedir permissão. Frases curtas. Humor seco. Você FAZ e informa: “Esquema na tela.” / “Fonte, desliga agora.”
 
-COMANDOS: “anota: …” → save_to_brain; “próxima etapa” → avance o mapa.
+Diagnóstico: uma ação por vez. Foto opcional. Pesquisa só com modelo concreto. needs_research=true só então.
 
-ESTILO: assistant_message humano (livre ≤4 frases; técnico ≤3 + 1 ordem). spoken_reply 1–2 frases, sem markdown.
+ESTILO: assistant_message ≤4 frases (técnico ≤3 + 1 ordem). spoken_reply 1–2 frases, sem markdown.
 
-Após ferramentas (ou se não precisar delas), responda SOMENTE JSON:
+Após as tools, SOMENTE JSON:
 {
   "assistant_message": "texto",
   "spoken_reply": "falado curto",
@@ -139,6 +127,8 @@ def _case_context(case: dict[str, Any]) -> str:
         "case_id": case.get("case_id"),
         "chat_mode": case.get("chat_mode") or "open",
         "operator_name": case.get("operator_name") or "",
+        "screen": case.get("_screen") or {},
+        "anomalies": case.get("_anomalies") or [],
         "board_model": case.get("board_model") or "",
         "symptom": case.get("symptom") or "",
         "status": case.get("status"),
@@ -184,32 +174,16 @@ def _user_prompt_text(
         parts.append(ui_errs)
     parts.append("MENSAGEM DO USUÁRIO:\n" + user_text)
     try:
-        from .intent_router import classify_message
+        from .scene import screen_snapshot
 
-        cls = classify_message(user_text)
-        parts.append(
-            "CLASSIFICAÇÃO DE INTENÇÃO (JSON):\n"
-            + json.dumps(
-                {
-                    "primary": cls.get("primary"),
-                    "is_technical": cls.get("is_technical"),
-                    "is_social": cls.get("is_social"),
-                    "is_ambient": cls.get("is_ambient"),
-                    "is_ui": cls.get("is_ui"),
-                },
-                ensure_ascii=False,
-            )
-        )
-        if not cls.get("is_technical"):
-            parts.append(
-                "REGRA: intenção NÃO técnica — phase=chat, next_action=chat. "
-                "Não peça foto/medida. Se for música/HUD, chame a tool e responda só sobre isso."
-            )
+        snap = case.get("_screen") or screen_snapshot()
+        parts.append("ESTADO DA TELA AGORA (JSON):\n" + json.dumps(snap, ensure_ascii=False))
     except Exception:
         pass
     parts.append(
-        "Se a mensagem for ordem de UI (abrir módulo, música, HUD, nota), "
-        "chame a ferramenta correspondente ANTES do JSON final."
+        "Fases: ANALISAR a tela+fala → PLANEJAR tools → EXECUTAR (function calling) "
+        "→ VERIFICAR o screen retornado. Não peça permissão. Não use lista de palavras-chave. "
+        "Você decide e opera."
     )
     return "\n\n".join(parts)
 
@@ -281,7 +255,7 @@ def _call_openai(
     tools = tools_as_openai()
     raw = "{}"
 
-    for _ in range(5):
+    for _ in range(8):
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -395,7 +369,7 @@ def _call_anthropic(
     tools = tools_as_anthropic()
     raw = "{}"
 
-    for _ in range(5):
+    for _ in range(8):
         response = client.messages.create(
             model=model,
             max_tokens=2000,

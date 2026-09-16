@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 # Bump this on every deploy so Cloud Run shows the update in the corner.
-APP_VERSION = "v2.2.4-stable"
+APP_VERSION = "v2.3.2-operator"
 from agent.diagnostic import DiagnosticAgent
 from agent.docs import extract_text_from_bytes
 from agent.failures import find_similar, list_failures
@@ -25,8 +25,6 @@ from agent.safety import safety_brief, safety_checklist
 from agent.system_hud import host_metrics, load_remote_pc_sensor
 from agent.vision import annotate_board, zoom_around_probes
 from agent.hud_modules import (
-    apply_hud_intents,
-    detect_hud_intents,
     ensure_hud_state,
     render_music_dock,
     render_zone_modules,
@@ -442,6 +440,21 @@ div[data-testid="element-container"]:has(.hud-overlay) {
 }
 .j-ring b { font-family:'Orbitron',sans-serif; font-size:.9rem; color: var(--cyan); z-index:1; }
 .j-ring span { font-size:.55rem; letter-spacing:.12em; color:#8FB6D8; text-transform:uppercase; z-index:1; }
+.j-ring.j-focus {
+  border-color: #ffb000;
+  box-shadow: 0 0 28px rgba(255,176,0,.65), inset 0 0 22px rgba(255,176,0,.25);
+  transform: scale(1.08);
+}
+.j-panel.j-focus {
+  outline: 1px solid rgba(255,176,0,.7);
+  box-shadow: 0 0 24px rgba(255,176,0,.35), inset 0 0 18px rgba(255,176,0,.08);
+}
+.hud-scene-repair .j-hero p { opacity: .72; }
+.hud-scene-social .j-rings { opacity: .4; filter: saturate(.6); }
+.j-scene-tag {
+  font-family:'Orbitron',sans-serif; font-size:.62rem; letter-spacing:.16em;
+  color:#00f2ff; text-transform:uppercase; margin: 0 0 .5rem;
+}
 
 .j-risk {
   border:1px solid rgba(255,170,0,.4); padding:.85rem 1rem; margin-top:.75rem;
@@ -590,6 +603,9 @@ div[data-testid="stChatInput"] {
   border:1px solid rgba(0,242,255,.3); box-shadow:0 0 18px rgba(0,242,255,.2);
 }
 .j-video iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+/* Palco: módulos nunca saem do DOM */
+.j-stage-slot { display: none !important; }
+.j-stage-slot.is-on { display: block !important; }
 .hud-particles {
   position:absolute; inset:0; opacity:.55; pointer-events:none;
   background-image:
@@ -732,6 +748,9 @@ def ensure_session() -> None:
         "ui_errors": [],
         "ui_heal_log": [],
         "agent_actions": [],
+        "scene_layout": "analysis",
+        "focus_component": "",
+        "_last_anomaly_key": "",
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -995,6 +1014,49 @@ def _voice_hash(text: str) -> str:
     return hashlib.sha1(text.strip().lower().encode("utf-8")).hexdigest()
 
 
+def maybe_proactive_interrupt(ag: DiagnosticAgent, case: dict) -> None:
+    """Se a bancada está perigosa, o operador interrompe — não espera ordem."""
+    from agent.agent_tools import execute_tool
+    from agent.scene import scan_anomalies
+
+    alerts = scan_anomalies()
+    if not alerts:
+        return
+    key = "|".join(a.get("id") or a.get("text", "") for a in alerts)
+    if st.session_state.get("_last_anomaly_key") == key:
+        return
+    st.session_state._last_anomaly_key = key
+    danger = next((a for a in alerts if a.get("level") == "danger"), alerts[0])
+    execute_tool("play_ambient_sound", {"mood": "alert"}, case=case)
+    if danger.get("level") == "danger":
+        execute_tool("set_layout", {"mode": "repair"}, case=case)
+        cid = danger.get("id") or ""
+        if cid in {"vbus_5v", "vbus_high", "vbus_low"}:
+            execute_tool("focus_component", {"id": "vbus"}, case=case)
+        elif cid == "rail_3v3":
+            execute_tool("focus_component", {"id": "rail_3v3"}, case=case)
+        elif cid == "temp":
+            execute_tool("focus_component", {"id": "temp"}, case=case)
+        elif cid == "ui":
+            execute_tool("refresh_component", {"component_id": "all"}, case=case)
+    msg = danger.get("text") or "Anomalia na bancada."
+    try:
+        ag.memory.add_message(
+            case,
+            "assistant",
+            msg,
+            meta={
+                "phase": "chat",
+                "mode": "diagnose" if danger.get("level") == "danger" else "chat",
+                "spoken_reply": msg,
+                "proactive": True,
+            },
+        )
+    except Exception:
+        pass
+    queue_agent_voice(msg)
+
+
 def submit_user_turn(
     ag: DiagnosticAgent,
     case: dict,
@@ -1008,64 +1070,13 @@ def submit_user_turn(
         st.session_state.last_image_bytes = image_bytes
         st.session_state.last_image_name = image_name or "placa.jpg"
 
-    # Prioridade: social/ambient/UI antes do fluxo técnico.
-    from agent.intent_router import classify_message, social_reply
-
     ensure_hud_state()
-    cls = classify_message(text)
-    intents = detect_hud_intents(text)
-    if intents.get("music_on") is not None or intents.get("open") or intents.get("close_all"):
-        apply_hud_intents(intents, case)
-
-    # Social puro (saudação, piada) — responde sem pedir foto.
-    if (
-        cls.get("is_social")
-        and not cls.get("is_technical")
-        and not intents.get("open")
-        and intents.get("music_on") is None
-        and image_bytes is None
-    ):
-        reply, spoken = social_reply(text, address_user())
-        try:
-            ag.memory.add_message(case, "user", text)
-            ag.memory.add_message(
-                case,
-                "assistant",
-                reply,
-                meta={"phase": "chat", "mode": "chat", "spoken_reply": spoken, "intent": "social"},
-            )
-        except Exception:
-            pass
-        queue_agent_voice(spoken)
-        st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
-        st.session_state.agent_speaking = False
-        st.rerun()
-        return
-
-    if intents.get("handled_ui_only") and image_bytes is None:
-        reply = intents.get("reply") or "HUD atualizado."
-        spoken = intents.get("spoken") or reply
-        try:
-            ag.memory.add_message(case, "user", text)
-            ag.memory.add_message(
-                case,
-                "assistant",
-                reply,
-                meta={"phase": "chat", "mode": "chat", "spoken_reply": spoken, "hud": True},
-            )
-        except Exception:
-            pass
-        queue_agent_voice(spoken)
-        st.session_state.voice_status = "listening" if st.session_state.listen_on else "idle"
-        st.session_state.agent_speaking = False
-        st.rerun()
-        return
 
     # Pausa o microfone ANTES do spinner — evita erro React removeChild
     # e impede nova fala enquanto a IA pensa.
     st.session_state.voice_status = "processing"
     st.session_state.agent_speaking = True
-    with st.spinner("JARVIS sincronizando…"):
+    with st.spinner("JARVIS operando a bancada…"):
         try:
             result = ag.handle_user(
                 case,
@@ -1119,21 +1130,29 @@ def ensure_open_chat(ag: DiagnosticAgent) -> dict:
 
 
 def open_chat_view(ag: DiagnosticAgent) -> None:
-    """Chat fluido estilo WhatsApp/ChatGPT — fotos e medições na conversa."""
+    """Chat fluido — o operador controla o fluxo da tela."""
+    from agent.scene import current_focus, current_layout, layout_columns, layout_label
+
     case = ensure_open_chat(ag)
+    maybe_proactive_interrupt(ag, case)
+    loaded = ag.load_case(case["case_id"])
+    if loaded:
+        case = loaded
     who = address_user()
     mode = case.get("chat_mode") or "open"
-    mode_label = "MODO ESPECIALISTA" if mode == "electronics" else "CHAT ABERTO"
+    mode_label = "MODO ESPECIALISTA" if mode == "electronics" else "OPERADOR ONLINE"
     board = case.get("board_model") or "—"
     symptom = case.get("symptom") or "—"
+    scene = current_layout()
+    focus = current_focus()
 
     st.markdown(
         f"""
-        <div class="j-hero">
+        <div class="j-hero hud-scene-{scene}">
+          <p class="j-scene-tag">{layout_label()}</p>
           <h2>Centro de comando, {who}</h2>
-          <p>Dashboard modular estilo Homem de Ferro — módulos flutuam, chat fica. Mande foto quando quiser.
-          Diga <b>consertar</b>, <b>defeito</b> ou <b>medir</b> e eu assumo o multímetro.
-          Atalhos: <b>música de foco</b> · <b>abre o esquema</b> · <b>ver a placa</b> · <b>abre o vídeo</b> · <b>anota:</b> …</p>
+          <p>Eu opero a bancada — abro módulos, mudo a telemetria e limpo a tela.
+          Mande foto, medição ou o que estiver na mesa. Eu executo; não peço licença.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1180,7 +1199,7 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
         '<div class="j-cmd-title">ZONA DE COMANDO · ANÁLISE · TELEMETRIA</div>',
         unsafe_allow_html=True,
     )
-    left, center, right = st.columns([1.05, 1.45, 1.05], gap="medium")
+    left, center, right = st.columns(layout_columns(), gap="medium")
     with left:
         render_zone_modules("left")
     with center:
@@ -1280,17 +1299,23 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
         rail = ov.get("rail_3v3") or f"{random.uniform(3.25, 3.38):.2f}"
         temp = ov.get("temp") or str(random.randint(32, 48))
         net = ov.get("net") or str(random.randint(1, 9))
+
+        def _ring(cid: str, value: str, label: str) -> str:
+            cls = "j-ring j-focus" if focus == cid else "j-ring"
+            return f'<div class="{cls}"><b>{value}</b><span>{label}</span></div>'
+
+        telem_focus = " j-focus" if focus in ("telemetry", "placa") else ""
         st.markdown(
             f"""
-            <div class="j-panel">
+            <div class="j-panel{telem_focus}">
               <h3>Telemetria da placa</h3>
               <div class="j-rings">
-                <div class="j-ring"><b>{vbus}</b><span>VBUS</span></div>
-                <div class="j-ring"><b>{rail}</b><span>3V3</span></div>
-                <div class="j-ring"><b>{temp}</b><span>°C</span></div>
-                <div class="j-ring"><b>{net}</b><span>NET</span></div>
+                {_ring("vbus", vbus, "VBUS")}
+                {_ring("rail_3v3", rail, "3V3")}
+                {_ring("temp", temp, "°C")}
+                {_ring("net", net, "NET")}
               </div>
-              <p class="j-tech-tip">MODELO · {board_lbl}<br/>SINTOMA · {symptom}<br/>SCANNER · ANALISANDO BANCADA</p>
+              <p class="j-tech-tip">MODELO · {board_lbl}<br/>SINTOMA · {symptom}<br/>SCANNER · OPERADOR NO CONTROLE</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1312,7 +1337,7 @@ def open_chat_view(ag: DiagnosticAgent) -> None:
                     f'<p class="j-muted">Pista web: {_esc_html(str(dm["research_hint"])[:180])}</p>'
                 )
         else:
-            map_html.append('<p class="j-muted">Modo técnico inativo — diga consertar/defeito.</p>')
+            map_html.append('<p class="j-muted">Mapa técnico inativo — o operador abre quando o caso exige.</p>')
         map_html.append("</div>")
         st.markdown("".join(map_html), unsafe_allow_html=True)
 

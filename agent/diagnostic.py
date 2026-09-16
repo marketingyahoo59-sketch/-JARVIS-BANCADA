@@ -13,7 +13,8 @@ from .learning_db import (
     map_as_context,
     remember_resolution,
 )
-from .llm import call_llm, provider_status
+from .operator import reason
+from .llm import provider_status
 from .memory import CaseMemory
 from .profile import address_user
 from .research import is_researchable_device, research_for_case
@@ -177,7 +178,7 @@ class DiagnosticAgent:
         self.memory.save(case)
         safety = safety_brief("intake")
 
-        result = call_llm(
+        result = reason(
             case,
             user_text=(
                 f"Início do caso no Modo Mestre Técnico. Modelo: {board_model}. "
@@ -221,7 +222,7 @@ class DiagnosticAgent:
             f"[Documento anexado: {filename}]",
             meta={"document": filename},
         )
-        result = call_llm(
+        result = reason(
             case,
             user_text=(
                 f"O usuário anexou o documento/esquema “{filename}”. "
@@ -296,15 +297,10 @@ class DiagnosticAgent:
         hour = __import__("datetime").datetime.now().hour
         greet = "Bom dia" if hour < 12 else ("Boa tarde" if hour < 18 else "Boa noite")
         msg = (
-            f"{greet}, {who}. Online e sem modo robô. "
-            "Pode papear — ou jogar o aparelho e o defeito que eu assumo a bancada: "
-            "manual, mapa e uma medição de cada vez. "
-            "Atalhos: **anota:** … e **próxima etapa**."
+            f"{greet}, {who}. Sistema sob meu controle. "
+            "Eu opero o HUD — módulos, telemetria e bancada. Fala o que precisa; eu executo."
         )
-        spoken = (
-            f"{greet}, {who}. Estou online. Fala comigo. "
-            "Para conserto, modelo e sintoma — eu puxo o fio."
-        )
+        spoken = f"{greet}, {who}. Centro de comando online. Eu opero a bancada."
         self.memory.add_message(
             case,
             "assistant",
@@ -446,141 +442,6 @@ class DiagnosticAgent:
             meta["image"] = image_name
         self.memory.add_message(case, "user", user_text, meta=meta or None)
 
-        # Hotword: anota: ...
-        note_m = NOTE_RE.match(user_text or "")
-        if note_m:
-            note = note_m.group(1).strip()
-            prev = str(case.get("notes") or "")
-            case["notes"] = (prev + "\n" + note).strip() if prev else note
-            case.setdefault("operator_notes", [])
-            if isinstance(case["operator_notes"], list):
-                case["operator_notes"].append(
-                    {"text": note, "at": __import__("datetime").datetime.utcnow().isoformat() + "Z"}
-                )
-            self.memory.save(case)
-            msg = f"Anotado: _{note}_. Continuo daqui."
-            spoken = f"Anotado. {note[:120]}"
-            self.memory.add_message(
-                case,
-                "assistant",
-                msg,
-                meta={
-                    "phase": case.get("phase") or "chat",
-                    "mode": "chat" if case.get("chat_mode") == "open" else "diagnose",
-                    "spoken_reply": spoken,
-                    "verdict": "pending",
-                },
-            )
-            return {
-                "case": case,
-                "message": msg,
-                "spoken_reply": spoken,
-                "phase": case.get("phase") or "chat",
-                "mode": "diagnose",
-                "probe": None,
-                "verdict": "pending",
-                "solution": None,
-                "next_action": "chat",
-            }
-
-        # Hotword: próxima etapa / próximo passo
-        if NEXT_STEP_RE.search(user_text or "") and case.get("chat_mode") == "electronics":
-            dm = case.get("diagnostic_map") or build_diagnostic_map(
-                str(case.get("board_model") or ""),
-                str(case.get("symptom") or ""),
-                "",
-            )
-            case["diagnostic_map"] = dm
-            cur = int(dm.get("current_step") or 1)
-            steps = dm.get("steps") or []
-            max_id = max((int(s.get("id") or 0) for s in steps), default=3)
-            if cur >= max_id:
-                msg = (
-                    "Já estamos no último passo do mapa. Me diga a medição "
-                    "ou a peça suspeita — ou marque resolvido quando fechar."
-                )
-            else:
-                dm["current_step"] = cur + 1
-                step = next(
-                    (s for s in steps if int(s.get("id") or 0) == int(dm["current_step"])),
-                    None,
-                )
-                name = (step or {}).get("name") or f"Passo {dm['current_step']}"
-                ask = (step or {}).get("ask") or "Seguinte teste."
-                goal = (step or {}).get("goal") or ""
-                msg = f"**Próxima etapa — {name}.** {goal} {ask}".strip()
-            spoken = re.sub(r"[*_`]", "", msg)[:220]
-            self.memory.save(case)
-            self.memory.add_message(
-                case,
-                "assistant",
-                msg,
-                meta={
-                    "phase": "measure" if int(dm.get("current_step") or 1) >= 2 else "vision",
-                    "mode": "diagnose",
-                    "spoken_reply": spoken,
-                    "verdict": "pending",
-                    "diagnostic_step": dm.get("current_step"),
-                },
-            )
-            return {
-                "case": case,
-                "message": msg,
-                "spoken_reply": spoken,
-                "phase": case.get("phase"),
-                "mode": "diagnose",
-                "probe": None,
-                "verdict": "pending",
-                "solution": None,
-                "next_action": "ask_measurement",
-            }
-
-        # Retomar caso anterior ("placa de ontem", "continuando"…)
-        if is_resume_intent(user_text) and case.get("chat_mode") == "open" and not case.get("board_model"):
-            resumed = self.try_resume_case(user_text)
-            if resumed and resumed.get("case_id") != case.get("case_id"):
-                board = resumed.get("board_model") or "placa"
-                symptom = resumed.get("symptom") or "—"
-                msg = (
-                    f"Recuperei o caso **{board}** ({symptom}). "
-                    f"Última atualização: {str(resumed.get('updated_at') or '')[:19]}. "
-                    "Seguimos de onde paramos — me diga a última medição ou mande uma foto nova."
-                )
-                spoken = f"Recuperei o caso {board}. Continuamos de onde paramos."
-                resumed["chat_mode"] = "electronics"
-                self.memory.add_message(
-                    resumed,
-                    "assistant",
-                    msg,
-                    meta={"phase": resumed.get("phase"), "mode": "diagnose", "spoken_reply": spoken},
-                )
-                self.memory.save(resumed)
-                return {
-                    "case": resumed,
-                    "message": msg,
-                    "spoken_reply": spoken,
-                    "phase": resumed.get("phase"),
-                    "mode": "diagnose",
-                    "probe": None,
-                    "verdict": "pending",
-                    "solution": None,
-                    "next_action": "ask_measurement",
-                    "switched_case_id": resumed["case_id"],
-                }
-
-        from .intent_router import classify_message
-
-        cls = classify_message(user_text)
-        case["_last_intent"] = cls
-
-        # Gatilho técnico — social/ambient puro NÃO entra em Mestre Técnico
-        if case.get("chat_mode") != "electronics":
-            if image_bytes is not None or (
-                cls.get("is_technical") and not cls.get("blocks_electronics_activation")
-            ):
-                if is_electronics_intent(user_text) or image_bytes is not None or cls.get("is_technical"):
-                    self.activate_electronics(case, user_text, announce=True)
-
         # Confirmação pendente de medição antes do modo solução
         pending = case.get("pending_confirm")
         if pending and self._is_confirm(user_text):
@@ -619,29 +480,15 @@ class DiagnosticAgent:
                 "e peça UMA medição específica. Inclua aviso curto de segurança.]"
             )
 
-        lowered = user_text.lower()
         needs_from_llm = bool(case.get("_needs_research"))
         case["_needs_research"] = False
-        # Pesquisa web é cara/lenta no Render — só na 1ª vez, se pedir, ou se o LLM pediu.
-        ask_research = any(
-            k in lowered
-            for k in (
-                "esquema",
-                "datasheet",
-                "pesquisa",
-                "manual",
-                "procura",
-                "busca",
-                "defeito comum",
-            )
-        )
         should_research = (
-            (needs_from_llm or ask_research or not case.get("last_research"))
+            (needs_from_llm or not case.get("last_research"))
             and is_researchable_device(str(case.get("board_model") or ""))
         )
         extra = _brain_context(case, user_text, force_research=should_research)
 
-        result = call_llm(
+        result = reason(
             case,
             prompt,
             image_bytes=image_bytes,
@@ -654,7 +501,7 @@ class DiagnosticAgent:
             if not extra or "(pesquisa indisponível" in extra:
                 extra2 = _brain_context(case, user_text, force_research=True)
                 if extra2 and extra2 != extra:
-                    result = call_llm(
+                    result = reason(
                         case,
                         prompt
                         + "\n\n[Pesquisa reforçada acabou de chegar — use-a para liderar o próximo teste.]",
@@ -816,10 +663,8 @@ class DiagnosticAgent:
             case["chat_mode"] = "electronics"
         # Prefixo de anúncio do modo Mestre Técnico (uma vez) — nunca em social/ambient
         announce = case.pop("_electronics_announce", None)
-        last_intent = case.get("_last_intent") or {}
         skip_announce = bool(
-            last_intent.get("skip_photo_pressure")
-            or result.get("next_action") == "chat"
+            result.get("next_action") == "chat"
             or (result.get("mode") == "chat" and case.get("chat_mode") == "open")
         )
         if announce and not skip_announce and not (

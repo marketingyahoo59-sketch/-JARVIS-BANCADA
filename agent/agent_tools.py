@@ -141,7 +141,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "close_modules",
-            "description": "Fecha módulos flutuantes.",
+            "description": "Fecha módulos flutuantes (kind=all limpa a visão).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -153,6 +153,62 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_all_modules",
+            "description": "Fecha todos os módulos e limpa o foco. Use para limpar a visão.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_layout",
+            "description": (
+                "Muda a cena do HUD. repair=Modo Conserto (foco imagem/esquema), "
+                "social=chat expandido, analysis=tudo aberto. Execute, não pergunte."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["repair", "social", "analysis", "conserto", "analise"],
+                    }
+                },
+                "required": ["mode"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "focus_component",
+            "description": (
+                "Destaca um ponto da placa ou dado da telemetria "
+                "(vbus, rail_3v3, temp, cpu, ram, scan, net, ou id de módulo)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "id do anel/módulo a destacar",
+                    }
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_screen",
+            "description": "Lê o estado atual da tela (layout, módulos, telemetria, erros) para VERIFICAR.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 _ALIAS = {
@@ -161,6 +217,9 @@ _ALIAS = {
     "play_music": "play_ambient_sound",
     "save_note": "save_to_brain",
     "acknowledge_ui_error": "refresh_component",
+    "clear_screen": "close_all_modules",
+    "set_scene": "set_layout",
+    "highlight": "focus_component",
 }
 
 
@@ -168,7 +227,9 @@ def _session():
     try:
         import streamlit as st
 
-        return st.session_state
+        ss = st.session_state
+        ss.setdefault("_jarvis_alive", True)
+        return ss
     except Exception:
         return None
 
@@ -185,6 +246,8 @@ def _ensure_stores(ss: Any) -> None:
     ss.setdefault("agent_actions", [])
     ss.setdefault("component_refresh", {})
     ss.setdefault("event_bus_queue", [])
+    ss.setdefault("scene_layout", "analysis")
+    ss.setdefault("focus_component", "")
 
 
 def _emit(event_type: str, payload: dict[str, Any]) -> None:
@@ -251,6 +314,14 @@ def execute_tool(
         return _tool_save_to_brain(ss, args, case)
     if name == "refresh_component":
         return _tool_refresh_component(ss, args)
+    if name == "close_all_modules":
+        return _tool_close_all_modules(ss)
+    if name == "set_layout":
+        return _tool_set_layout(ss, args)
+    if name == "focus_component":
+        return _tool_focus_component(ss, args)
+    if name == "inspect_screen":
+        return _tool_inspect_screen()
     return {"ok": False, "error": f"ferramenta desconhecida: {name}"}
 
 
@@ -494,6 +565,69 @@ def _tool_refresh_component(ss: Any, args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "refreshed": component_id, "tokens": tokens}
 
 
+def _screen() -> dict[str, Any]:
+    from .scene import screen_snapshot
+
+    return screen_snapshot()
+
+
+def _tool_close_all_modules(ss: Any) -> dict[str, Any]:
+    if ss is not None:
+        from .hud_modules import close_modules
+
+        close_modules()
+        ss.focus_component = ""
+    _log_action(ss, "close_all_modules", "all")
+    _emit("close_all_modules", {"kind": "all"})
+    return {"ok": True, "closed": "all", "screen": _screen()}
+
+
+def _tool_set_layout(ss: Any, args: dict[str, Any]) -> dict[str, Any]:
+    from .scene import LAYOUT_MODES, normalize_layout
+
+    mode = normalize_layout(str(args.get("mode") or ""))
+    if not mode:
+        return {"ok": False, "error": "mode inválido (repair|social|analysis)"}
+    if ss is not None:
+        ss.scene_layout = mode
+        if mode == "social":
+            ss.focus_component = ss.get("focus_component") or ""
+    _log_action(ss, "set_layout", mode)
+    _emit("set_layout", {"mode": mode, "label": LAYOUT_MODES[mode]["label"]})
+    return {
+        "ok": True,
+        "layout": mode,
+        "label": LAYOUT_MODES[mode]["label"],
+        "screen": _screen(),
+    }
+
+
+def _tool_focus_component(ss: Any, args: dict[str, Any]) -> dict[str, Any]:
+    cid = str(args.get("id") or args.get("component_id") or "").strip()
+    if not cid:
+        return {"ok": False, "error": "id obrigatório"}
+    aliases = {
+        "5v": "vbus",
+        "5vsb": "vbus",
+        "tensao": "vbus",
+        "tensão": "vbus",
+        "3v3": "rail_3v3",
+        "3.3": "rail_3v3",
+        "temperatura": "temp",
+    }
+    cid = aliases.get(cid.lower(), cid)
+    if ss is not None:
+        ss.focus_component = cid
+    _log_action(ss, "focus_component", cid)
+    _emit("focus_component", {"id": cid})
+    return {"ok": True, "id": cid, "screen": _screen()}
+
+
+def _tool_inspect_screen() -> dict[str, Any]:
+    snap = _screen()
+    return {"ok": True, "screen": snap}
+
+
 def tools_as_openai() -> list[dict[str, Any]]:
     return TOOL_DEFINITIONS
 
@@ -530,6 +664,14 @@ def format_actions_for_user(actions: list[dict[str, Any]]) -> str:
             bits.append("módulos fechados")
         elif name == "refresh_component":
             bits.append(f"refresh `{a.get('component_id') or 'ui'}`")
+        elif name == "set_layout":
+            bits.append(f"cena `{a.get('mode') or a.get('layout') or '?'}`")
+        elif name == "close_all_modules":
+            bits.append("visão limpa")
+        elif name == "focus_component":
+            bits.append(f"foco `{a.get('id')}`")
+        elif name == "inspect_screen":
+            bits.append("scan da tela")
     if not bits:
         return ""
     return "Ações: " + ", ".join(bits) + "."

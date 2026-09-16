@@ -77,38 +77,35 @@ def test_research_guards() -> None:
         fail("2b pesquisa", exc)
 
 
-def test_hotwords() -> None:
+def test_operator_scene() -> None:
     try:
-        from agent.diagnostic import DiagnosticAgent, NOTE_RE, NEXT_STEP_RE
-        from agent.memory import CaseMemory
+        from agent.agent_tools import execute_tool
+        from agent.scene import (
+            parse_num,
+            scan_anomalies,
+            screen_snapshot,
+            verify_actions,
+        )
 
-        assert NOTE_RE.match("anota: fusível OK")
-        assert NEXT_STEP_RE.search("próxima etapa")
-        with tempfile.TemporaryDirectory() as tmp:
-            mem = CaseMemory(Path(tmp))
-            ag = DiagnosticAgent(mem)
-            case = mem.create("", "", chat_mode="open")
-            out = ag.handle_user(case, "anota: LED standby apagado")
-            assert "Anotado" in (out.get("message") or "")
-            assert "LED standby" in str(case.get("notes") or "")
-            case2 = mem.create("Fonte XYZ-99", "não liga", chat_mode="electronics")
-            case2["chat_mode"] = "electronics"
-            case2["diagnostic_map"] = {
-                "device": "Fonte XYZ-99",
-                "current_step": 1,
-                "steps": [
-                    {"id": 1, "name": "Análise visual", "goal": "Ver", "ask": "Foto"},
-                    {"id": 2, "name": "Medições", "goal": "Medir", "ask": "5VSB"},
-                    {"id": 3, "name": "Componentes", "goal": "Isolar", "ask": "CI"},
-                ],
-            }
-            mem.save(case2)
-            out2 = ag.handle_user(case2, "próxima etapa")
-            assert case2["diagnostic_map"]["current_step"] == 2
-            assert "Medições" in (out2.get("message") or "")
-        ok("2c hotwords anota/próxima")
+        assert parse_num("5.8 V") == 5.8
+        alerts = scan_anomalies({"telemetry": {"vbus": "5.9 V"}, "ui_errors": []})
+        assert alerts and "5V" in alerts[0]["text"]
+        snap = screen_snapshot()
+        assert "layout" in snap and "modules" in snap
+        close = execute_tool("close_all_modules", {})
+        assert close.get("ok")
+        layout = execute_tool("set_layout", {"mode": "repair"})
+        assert layout.get("ok") and layout.get("layout") == "repair"
+        focus = execute_tool("focus_component", {"id": "vbus"})
+        assert focus.get("ok") and focus.get("id") == "vbus"
+        checks = verify_actions(
+            [{"name": "set_layout", "result": {"ok": True, "layout": "repair"}}],
+            {"layout": "repair", "modules": [], "focus": "vbus"},
+        )
+        assert checks and checks[0]["ok"]
+        ok("2c operador: cena + anomalia 5V + tools")
     except Exception as exc:  # noqa: BLE001
-        fail("2c hotwords", exc)
+        fail("2c operador cena", exc)
 
 
 def test_failures() -> None:
@@ -307,7 +304,7 @@ if __name__ == "__main__":
     test_vision()
     test_status_helpers()
     test_research_guards()
-    test_hotwords()
+    test_operator_scene()
     test_failures()
     test_docs()
     test_safety()

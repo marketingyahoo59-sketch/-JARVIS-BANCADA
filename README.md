@@ -15,7 +15,7 @@ Guia: **[deploy/CLOUDRUN.md](deploy/CLOUDRUN.md)**
 6. **Memória** — SQLite + fotos no **bucket GCS** (`GCS_BUCKET`).
 7. **Visão**, falhas, PDF, segurança, TTS (edge), PWA, HUD.
 8. **Voz estável** — mic via `st.audio_input` (iframe contínuo removido: corrigia o crash `removeChild`).
-9. **Agente com Function Calling** — a IA dispara ferramentas reais (`launch_module`, `play_ambient_sound`, `update_telemetry`, `save_to_brain`, `refresh_component`…) e a UI reage na hora (não só texto).
+9. **Operador autônomo** — loop ANALISAR → PLANEJAR → EXECUTAR → VERIFICAR. Tools de cena: `set_layout`, `close_all_modules`, `focus_component`. Proativo em tensão/temp/erro de HUD.
 10. **Self-heal + Event Bus** — captura erros JS e remonta módulos; toasts/SFX/telemetria live sem reload manual.
 
 ## Local

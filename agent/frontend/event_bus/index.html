@@ -148,8 +148,8 @@
           if (type === "launch_module") {
             pushToast("Módulo · " + (p.type || p.kind || "UI") + " online", "ok");
             beep(880, 90, "triangle");
-          } else if (type === "close_modules") {
-            pushToast("Módulos recolhidos");
+          } else if (type === "close_modules" || type === "close_all_modules") {
+            pushToast("Palco · módulos ocultos");
             beep(220, 80);
           } else if (type === "play_ambient_sound") {
             pushToast("Áudio · " + (p.mood || "ambient"), "ok");
